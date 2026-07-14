@@ -825,8 +825,8 @@ private struct SettingsPage: View {
                                         style: style,
                                         levels: [0.12, 0.35, 0.7, 0.42, 0.9, 0.5, 0.22, 0.65, 0.38, 0.78, 0.3]
                                     )
-                                    .padding(.horizontal, 8)
-                                    .frame(height: 34)
+                                    .scaleEffect(0.72)
+                                    .frame(width: 100, height: 44)
                                     .frame(maxWidth: .infinity)
                                     .background(
                                         LinearGradient(
@@ -835,6 +835,7 @@ private struct SettingsPage: View {
                                         ),
                                         in: RoundedRectangle(cornerRadius: 8, style: .continuous)
                                     )
+                                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                                     Text(style.displayName)
                                         .font(.system(size: 10.5, weight: .semibold))
                                         .foregroundStyle(NV.ink)

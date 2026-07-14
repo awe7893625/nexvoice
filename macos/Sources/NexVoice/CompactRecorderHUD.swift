@@ -60,7 +60,7 @@ final class CompactRecorderHUD {
     private func makePanel() -> NSPanel {
         let root = CompactRecorderView(model: model)
         let panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 100, height: 44),
+            contentRect: NSRect(x: 0, y: 0, width: 140, height: 64),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false
@@ -179,12 +179,12 @@ private struct CompactRecorderView: View {
                     .shadow(color: .black.opacity(0.6), radius: 6)
             } else {
                 HUDVisualization(style: model.style, levels: model.levels)
-                    .shadow(color: .black.opacity(0.55), radius: 2.5)
+                    .shadow(color: .black.opacity(0.45), radius: 2)
             }
         }
-        .frame(width: 84, height: 32)
+        .frame(width: 120, height: 52)
         .padding(.horizontal, 10)
-        .frame(width: 100, height: 44)
+        .frame(width: 140, height: 64)
     }
 }
 
@@ -217,7 +217,7 @@ struct HUDVisualization: View {
                 ZenIncense(level: levels.last ?? 0)
             }
         }
-        .frame(width: 84, height: 32)
+        .frame(width: 120, height: 52)
     }
 }
 
@@ -234,26 +234,31 @@ private struct PrecisionWaveform: View {
     let levels: [Double]
 
     private static let colors: [Color] = [
-        JewelTone.green, JewelTone.green, JewelTone.green,
-        JewelTone.purple, JewelTone.purple,
-        JewelTone.green, JewelTone.green,
+        JewelTone.green, JewelTone.purple, JewelTone.green,
+        JewelTone.purple, JewelTone.green, JewelTone.purple,
+        JewelTone.green, JewelTone.purple, JewelTone.green,
     ]
-    private static let baseHeights: [Double] = [0.2, 0.5, 0.8, 1.0, 0.8, 0.5, 0.2]
-    private static let phaseOffsets: [Double] = [-0.4, -0.2, 0, -0.3, -0.1, -0.5, -0.2]
+    private static let baseHeights: [Double] = [0.22, 0.42, 0.65, 0.88, 1.0, 0.88, 0.65, 0.42, 0.22]
+    private static let phaseOffsets: [Double] = [-0.45, -0.2, 0.05, -0.35, 0, -0.35, 0.05, -0.2, -0.45]
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 0.05)) { context in
+        TimelineView(.animation(minimumInterval: 0.04)) { context in
             let t = context.date.timeIntervalSinceReferenceDate
             let level = levels.last ?? 0
-            HStack(alignment: .center, spacing: 3) {
-                ForEach(0..<7, id: \.self) { index in
+            HStack(alignment: .center, spacing: 4) {
+                ForEach(0..<9, id: \.self) { index in
                     let bounce = 0.5 + 0.5 * sin((t + Self.phaseOffsets[index]) * 6.3)
-                    let energy = 0.3 + 0.7 * bounce
-                    let magnitude = Self.baseHeights[index] * (0.3 + level * 0.9) * energy
+                    let energy = 0.35 + 0.65 * bounce
+                    let magnitude = Self.baseHeights[index] * (0.3 + level * 0.95) * energy
                     Capsule()
-                        .fill(Self.colors[index])
-                        .frame(width: 3.5, height: max(3, 26 * magnitude))
-                        .shadow(color: Self.colors[index].opacity(0.5), radius: 2)
+                        .fill(
+                            LinearGradient(
+                                colors: [Self.colors[index], Self.colors[index].opacity(0.5)],
+                                startPoint: .top, endPoint: .bottom
+                            )
+                        )
+                        .frame(width: 4.5, height: max(4.5, 44 * magnitude))
+                        .shadow(color: Self.colors[index].opacity(0.7), radius: 4)
                 }
             }
         }
@@ -273,28 +278,45 @@ private struct QuantumOrb: View {
             let glow2 = 0.8 + 0.5 * sin(t * (2 * .pi / 1.5) + 1.0)
             let core = 0.85 + 0.25 * sin(t * (2 * .pi / 0.4))
             let energy = 0.5 + level * 0.8
-            let size: CGFloat = 30
+            let size: CGFloat = 46
 
             ZStack {
                 Circle()
                     .fill(RadialGradient(
-                        colors: [JewelTone.purple.opacity(0.6), .clear],
+                        colors: [JewelTone.purple.opacity(0.65), .clear],
                         center: .center, startRadius: 0, endRadius: size * 0.5
                     ))
-                    .blur(radius: 3)
+                    .frame(width: size, height: size)
+                    .blur(radius: 4)
                     .scaleEffect(0.7 + glow1 * 0.35 * energy)
                 Circle()
                     .fill(RadialGradient(
-                        colors: [JewelTone.green.opacity(0.6), .clear],
+                        colors: [JewelTone.green.opacity(0.65), .clear],
                         center: .center, startRadius: 0, endRadius: size * 0.4
                     ))
-                    .blur(radius: 2.5)
+                    .frame(width: size, height: size)
+                    .blur(radius: 3)
                     .scaleEffect(0.6 + glow2 * 0.3 * energy)
+                // Orbiting particles on tilted elliptical paths are what
+                // make it read "quantum" rather than a plain glow blob.
+                ForEach(0..<3, id: \.self) { index in
+                    let phase = t * (1.1 + Double(index) * 0.35) + Double(index) * 2.1
+                    let radius = size * (0.34 + 0.1 * Double(index))
+                    let wobble = 0.85 + 0.15 * sin(t * 3 + Double(index))
+                    let tint = index == 1 ? JewelTone.purple : JewelTone.green
+                    Circle()
+                        .fill(tint)
+                        .frame(width: 3.5, height: 3.5)
+                        .offset(x: cos(phase) * radius * wobble,
+                                y: sin(phase) * radius * 0.62 * wobble)
+                        .shadow(color: tint.opacity(0.9), radius: 3)
+                }
                 Circle()
                     .fill(Color.white)
-                    .frame(width: size * 0.24, height: size * 0.24)
+                    .frame(width: size * 0.2, height: size * 0.2)
                     .scaleEffect(core)
-                    .shadow(color: .white, radius: 4)
+                    .shadow(color: .white, radius: 6)
+                    .shadow(color: JewelTone.green.opacity(0.8), radius: 10)
             }
             .frame(width: size, height: size)
         }
@@ -313,20 +335,23 @@ private struct MinimalistRipple: View {
         TimelineView(.animation(minimumInterval: 0.05)) { context in
             let t = context.date.timeIntervalSinceReferenceDate
             let energy = 0.5 + level * 0.7
+            let pulse = 0.85 + 0.15 * sin(t * 3.4)
             ZStack {
                 ForEach(Self.delays.indices, id: \.self) { index in
                     let localT = (t + Self.delays[index])
                         .truncatingRemainder(dividingBy: Self.cycleDuration) / Self.cycleDuration
-                    let diameter = 4 + 18 * localT * energy
+                    let diameter = 7 + 40 * localT * energy
                     Circle()
-                        .stroke(JewelTone.green, lineWidth: max(0.5, 3 * (1 - localT)))
+                        .stroke(JewelTone.green, lineWidth: max(0.6, 3.5 * (1 - localT)))
                         .frame(width: diameter, height: diameter)
                         .opacity(max(0, 1 - localT))
+                        .shadow(color: JewelTone.green.opacity(0.5 * (1 - localT)), radius: 3)
                 }
                 Circle()
                     .fill(JewelTone.green)
-                    .frame(width: 5, height: 5)
-                    .shadow(color: JewelTone.green.opacity(0.5), radius: 2)
+                    .frame(width: 7, height: 7)
+                    .scaleEffect(pulse)
+                    .shadow(color: JewelTone.green.opacity(0.9), radius: 5)
             }
         }
     }
@@ -344,32 +369,54 @@ private struct SiriOrb: View {
             let t = context.date.timeIntervalSinceReferenceDate
             let breathe = 0.5 + 0.5 * sin(t * 1.7)
             let energy = 0.4 + level * 0.9
-            let size = 15 + breathe * 4 + level * 7
+            let size = 30 + breathe * 5 + level * 12
 
             ZStack {
-                Circle()
-                    .fill(
-                        AngularGradient(
-                            colors: [.cyan, .blue, .purple, .pink, .orange, .cyan],
-                            center: .center,
-                            angle: .degrees(t * 60)
-                        )
-                    )
-                    .blur(radius: 2.4)
-                    .opacity(0.92)
+                // Wide soft halo so the orb reads as luminous, not pasted on.
                 Circle()
                     .fill(
                         RadialGradient(
-                            colors: [.white.opacity(0.9), .white.opacity(0)],
-                            center: UnitPoint(x: 0.4, y: 0.35),
-                            startRadius: 0,
-                            endRadius: size * 0.62
+                            colors: [Color.purple.opacity(0.30 + level * 0.30), .clear],
+                            center: .center, startRadius: 0, endRadius: size * 0.95
                         )
                     )
-                    .scaleEffect(0.55 + energy * 0.22)
+                    .frame(width: size * 1.9, height: size * 1.9)
+                Circle()
+                    .fill(
+                        AngularGradient(
+                            colors: [.cyan, .blue, .purple, .pink, .orange, .yellow, .cyan],
+                            center: .center,
+                            angle: .degrees(t * 70)
+                        )
+                    )
+                    .frame(width: size, height: size)
+                    .blur(radius: 3)
+                    .opacity(0.95)
+                Circle()
+                    .fill(
+                        AngularGradient(
+                            colors: [.pink, .purple, .cyan, .blue, .pink],
+                            center: .center,
+                            angle: .degrees(-t * 45)
+                        )
+                    )
+                    .frame(width: size * 0.72, height: size * 0.72)
+                    .blur(radius: 4)
+                    .blendMode(.screen)
+                Circle()
+                    .fill(
+                        RadialGradient(
+                            colors: [.white.opacity(0.95), .white.opacity(0)],
+                            center: UnitPoint(x: 0.4, y: 0.35),
+                            startRadius: 0,
+                            endRadius: size * 0.55
+                        )
+                    )
+                    .frame(width: size, height: size)
+                    .scaleEffect(0.55 + energy * 0.25)
             }
-            .frame(width: size, height: size)
-            .shadow(color: .purple.opacity(0.5), radius: 3 + level * 5)
+            .frame(width: size * 1.9, height: size * 1.9)
+            .shadow(color: .purple.opacity(0.5), radius: 6 + level * 8)
         }
     }
 }
@@ -389,11 +436,11 @@ private struct WaterWave: View {
     }
 
     private static let layers: [Layer] = [
-        Layer(frequency: 5.5, speed: 1.00, phase: 0.0, amplitude: 1.00, width: 2.0, color: .white.opacity(0.95)),
-        Layer(frequency: 7.5, speed: -1.30, phase: 1.7, amplitude: 0.68, width: 1.4,
-              color: Color(red: 0.84, green: 0.93, blue: 1.0).opacity(0.55)),
-        Layer(frequency: 3.5, speed: 0.70, phase: 3.1, amplitude: 0.52, width: 1.2,
-              color: Color(red: 0.63, green: 0.77, blue: 1.0).opacity(0.4)),
+        Layer(frequency: 5.5, speed: 1.00, phase: 0.0, amplitude: 1.00, width: 2.6, color: .white.opacity(0.95)),
+        Layer(frequency: 7.5, speed: -1.30, phase: 1.7, amplitude: 0.68, width: 1.8,
+              color: Color(red: 0.84, green: 0.93, blue: 1.0).opacity(0.6)),
+        Layer(frequency: 3.5, speed: 0.70, phase: 3.1, amplitude: 0.52, width: 1.4,
+              color: Color(red: 0.63, green: 0.77, blue: 1.0).opacity(0.45)),
     ]
 
     let levels: [Double]
@@ -423,6 +470,13 @@ private struct WaterWave: View {
                         if first { path.move(to: point); first = false } else { path.addLine(to: point) }
                         x += step
                     }
+                    // Glow pass under the core line keeps it luminous
+                    // against any background without needing a card.
+                    canvas.stroke(
+                        path,
+                        with: .color(layer.color.opacity(0.35)),
+                        style: StrokeStyle(lineWidth: layer.width + 4, lineCap: .round, lineJoin: .round)
+                    )
                     canvas.stroke(
                         path,
                         with: .color(layer.color),
@@ -438,14 +492,23 @@ private struct MinimalDots: View {
     let levels: [Double]
 
     var body: some View {
-        HStack(spacing: 4) {
-            ForEach(0..<5, id: \.self) { index in
-                let source = levels.indices.contains(index * 2) ? levels[index * 2] : 0.05
-                Circle()
-                    .fill(.white.opacity(0.92))
-                    .frame(width: 3.5 + source * 5, height: 3.5 + source * 5)
-                    .animation(.easeOut(duration: 0.08), value: source)
+        TimelineView(.animation(minimumInterval: 0.04)) { context in
+            let t = context.date.timeIntervalSinceReferenceDate
+            let level = levels.last ?? 0
+            HStack(spacing: 8) {
+                ForEach(0..<5, id: \.self) { index in
+                    let source = levels.indices.contains(index * 2) ? levels[index * 2] : 0.05
+                    let bounce = sin(t * 4.2 + Double(index) * 0.9)
+                    let size = 6 + source * 8
+                    Circle()
+                        .fill(.white)
+                        .frame(width: size, height: size)
+                        .offset(y: -bounce * (3 + (level + source) * 9))
+                        .opacity(0.7 + 0.3 * (0.5 + 0.5 * bounce))
+                        .animation(.easeOut(duration: 0.08), value: source)
+                }
             }
+            .shadow(color: .white.opacity(0.5), radius: 4)
         }
     }
 }
@@ -663,14 +726,24 @@ private struct WaveformBars: View {
     let levels: [Double]
 
     var body: some View {
-        HStack(alignment: .center, spacing: 2) {
-            ForEach(Array(levels.enumerated()), id: \.offset) { index, level in
-                let emphasis = 0.82 + 0.18 * sin(Double(index) * 0.8)
-                Capsule()
-                    .fill(Color.white.opacity(0.95))
-                    .frame(width: 2, height: 3.5 + 18 * min(1, level * emphasis))
-                    .animation(.linear(duration: 0.075), value: level)
+        TimelineView(.animation(minimumInterval: 0.05)) { context in
+            let t = context.date.timeIntervalSinceReferenceDate
+            HStack(alignment: .center, spacing: 3.5) {
+                ForEach(Array(levels.enumerated()), id: \.offset) { index, level in
+                    let idle = 0.5 + 0.5 * sin(t * 2.6 + Double(index) * 0.55)
+                    let emphasis = 0.78 + 0.22 * sin(Double(index) * 0.8)
+                    Capsule()
+                        .fill(
+                            LinearGradient(
+                                colors: [.white, Color(red: 0.62, green: 0.80, blue: 1.0)],
+                                startPoint: .top, endPoint: .bottom
+                            )
+                        )
+                        .frame(width: 3.5, height: 5 + 3 * idle + 34 * min(1, level * emphasis))
+                        .animation(.linear(duration: 0.07), value: level)
+                }
             }
+            .shadow(color: Color(red: 0.35, green: 0.6, blue: 1.0).opacity(0.55), radius: 5)
         }
     }
 }
@@ -681,21 +754,45 @@ private struct WaveformBars: View {
 private struct AmberResonance: View {
     let level: Double
 
+    private static let sparkDelays: [Double] = [0, 1.1, 2.3]
+    private static let sparkCycle = 3.2
+
     var body: some View {
-        TimelineView(.animation(minimumInterval: 0.05)) { context in
+        TimelineView(.animation(minimumInterval: 0.04)) { context in
             let t = context.date.timeIntervalSinceReferenceDate
-            let energy = 0.5 + level * 0.7
+            let energy = 0.55 + level * 0.6
+            let breathe = 0.9 + 0.1 * sin(t * 1.9)
             ZStack {
+                // Wide candlelight halo behind the twin blobs.
+                Circle()
+                    .fill(RadialGradient(
+                        colors: [Color(red: 0.95, green: 0.62, blue: 0.25).opacity(0.38), .clear],
+                        center: .center, startRadius: 0, endRadius: 26
+                    ))
+                    .frame(width: 52, height: 52)
+                    .scaleEffect(breathe * energy + 0.4)
                 blob(t: t, period: 4, reversed: false, colors: [
                     Color(red: 0.851, green: 0.451, blue: 0.204),
                     Color(red: 0.549, green: 0.227, blue: 0.086),
-                ], size: 20, opacity: 1)
+                ], size: 32, opacity: 1)
                 blob(t: t, period: 3, reversed: true, colors: [
                     Color(red: 0.902, green: 0.667, blue: 0.408),
                     Color(red: 0.651, green: 0.353, blue: 0.180),
-                ], size: 15, opacity: 0.8)
+                ], size: 24, opacity: 0.85)
+                // Tiny sparks drifting up out of the glow.
+                ForEach(Self.sparkDelays.indices, id: \.self) { index in
+                    let localT = ((t + Self.sparkDelays[index])
+                        .truncatingRemainder(dividingBy: Self.sparkCycle)) / Self.sparkCycle
+                    Circle()
+                        .fill(Color(red: 1.0, green: 0.78, blue: 0.45))
+                        .frame(width: 2.5, height: 2.5)
+                        .offset(x: sin(localT * .pi * 2 + Double(index) * 2.1) * 8,
+                                y: 10 - localT * 36)
+                        .opacity(localT < 0.12 ? localT / 0.12 : max(0, 1 - localT * 1.1))
+                        .shadow(color: .orange.opacity(0.8), radius: 2)
+                }
             }
-            .scaleEffect(energy)
+            .scaleEffect(0.9 + level * 0.2)
         }
     }
 
@@ -733,27 +830,34 @@ private struct PencilSketch: View {
     }
 
     private static let rings: [Ring] = [
-        Ring(trim: 0.78, period: 2.5, reversed: false, color: .white.opacity(0.9), lineWidth: 1.4, opacity: 0.9, scale: 0.95),
-        Ring(trim: 0.7, period: 3.5, reversed: true, color: Color(red: 0.231, green: 0.510, blue: 0.965).opacity(0.75), lineWidth: 1.2, opacity: 0.6, scale: 1.0),
-        Ring(trim: 0.85, period: 2.0, reversed: false, color: .white.opacity(0.6), lineWidth: 1.0, opacity: 0.3, scale: 1.05),
+        Ring(trim: 0.78, period: 2.5, reversed: false, color: .white.opacity(0.92), lineWidth: 1.8, opacity: 0.95, scale: 0.95),
+        Ring(trim: 0.7, period: 3.5, reversed: true, color: Color(red: 0.231, green: 0.510, blue: 0.965).opacity(0.8), lineWidth: 1.5, opacity: 0.7, scale: 1.0),
+        Ring(trim: 0.85, period: 2.0, reversed: false, color: .white.opacity(0.65), lineWidth: 1.2, opacity: 0.35, scale: 1.07),
     ]
 
     var body: some View {
         TimelineView(.animation(minimumInterval: 0.03)) { context in
             let t = context.date.timeIntervalSinceReferenceDate
-            let size: CGFloat = 30 + level * 2
+            let size: CGFloat = 42 + level * 4
             ZStack {
                 ForEach(Self.rings.indices, id: \.self) { index in
                     let ring = Self.rings[index]
                     let direction = ring.reversed ? -1.0 : 1.0
                     let cycle = (t / ring.period).truncatingRemainder(dividingBy: 1)
+                    // Slight per-ring scale jitter keeps the strokes feeling
+                    // hand-traced instead of mechanically spun.
+                    let jitter = 1 + 0.022 * sin(t * 7 + Double(index) * 2.3)
                     Circle()
                         .trim(from: 0, to: ring.trim)
                         .stroke(ring.color, style: StrokeStyle(lineWidth: ring.lineWidth, lineCap: .round))
-                        .frame(width: size * ring.scale, height: size * ring.scale)
+                        .frame(width: size * ring.scale * jitter, height: size * ring.scale * jitter)
                         .rotationEffect(.degrees(direction * cycle * 360))
                         .opacity(ring.opacity)
                 }
+                Circle()
+                    .fill(.white.opacity(0.85))
+                    .frame(width: 3.5, height: 3.5)
+                    .scaleEffect(1 + level * 0.8)
             }
         }
     }
@@ -765,38 +869,66 @@ private struct ZenIncense: View {
     let level: Double
 
     private static let emberColor = Color(red: 0.925, green: 0.369, blue: 0.157)
-    private static let delays: [Double] = [0, 1.3, 2.6]
-    private static let cycleDuration = 4.0
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 0.05)) { context in
+        TimelineView(.animation(minimumInterval: 0.04)) { context in
             let t = context.date.timeIntervalSinceReferenceDate
-            let energy = 0.6 + level * 0.6
-            ZStack(alignment: .bottom) {
-                ForEach(Self.delays.indices, id: \.self) { index in
-                    let localT = (t + Self.delays[index])
-                        .truncatingRemainder(dividingBy: Self.cycleDuration) / Self.cycleDuration
-                    let riseHeight = 14 * localT * energy
-                    let driftX = (index.isMultiple(of: 2) ? 1.0 : -1.0) * 4 * localT
-                    let wisp = Ellipse()
-                        .fill(
-                            LinearGradient(
-                                colors: [Self.emberColor.opacity(0.7), .white.opacity(0.25), .clear],
-                                startPoint: .bottom, endPoint: .top
+            let energy = 0.65 + level * 0.5
+            Canvas { canvas, size in
+                let baseX = size.width / 2
+                let baseY = size.height - 9
+                let rise = size.height - 16
+
+                // Two staggered continuous smoke streams: particles are born
+                // at the ember, swell/thin/fade as they climb, amber near the
+                // source cooling to grey-white above.
+                canvas.drawLayer { layer in
+                    layer.addFilter(.blur(radius: 2.2))
+                    for stream in 0..<2 {
+                        let phase = Double(stream) * 2.6
+                        let drift = stream == 0 ? 1.0 : -0.72
+                        let count = 22
+                        for i in 0..<count {
+                            let s = ((Double(i) / Double(count)) + t / 5.5 + phase)
+                                .truncatingRemainder(dividingBy: 1)
+                            let sway = sin(s * .pi * 2.6 + t * 1.3 + phase) * (2 + s * 12) * drift
+                            let x = baseX + sway
+                            let y = baseY - 5 - s * rise * energy
+                            let fadeIn = min(1, s / 0.12)
+                            let fadeOut = max(0, 1 - s * 1.15)
+                            let alpha = 0.45 * fadeIn * fadeOut
+                            let radius = 1.6 + s * 4.8
+                            let warm = max(0, 1 - s * 3.2)
+                            let color = Color(
+                                red: 0.86 + 0.1 * warm,
+                                green: 0.86 - 0.38 * warm,
+                                blue: 0.86 - 0.58 * warm
                             )
-                        )
-                        .frame(width: 4 + localT * 4, height: 10)
-                        .blur(radius: 2 + localT * 3)
-                        .opacity(localT < 0.15 ? localT / 0.15 : max(0, 1 - localT))
-                    wisp
-                        .offset(x: driftX, y: -riseHeight)
+                            layer.fill(
+                                Path(ellipseIn: CGRect(x: x - radius, y: y - radius,
+                                                       width: radius * 2, height: radius * 2)),
+                                with: .color(color.opacity(alpha))
+                            )
+                        }
+                    }
                 }
-                Circle()
-                    .fill(Self.emberColor)
-                    .frame(width: 4, height: 4)
-                    .shadow(color: Self.emberColor.opacity(0.6), radius: 2)
+
+                // Breathing ember: layered glow + hot core.
+                let breathe = 0.7 + 0.3 * sin(t * 2.1)
+                for (radius, alpha) in [(9.0, 0.16), (5.5, 0.38)] {
+                    let r = radius * breathe
+                    canvas.fill(
+                        Path(ellipseIn: CGRect(x: baseX - r, y: baseY - r, width: r * 2, height: r * 2)),
+                        with: .color(Self.emberColor.opacity(alpha))
+                    )
+                }
+                let coreR = 2.6 * (0.85 + 0.15 * breathe) + level * 1.5
+                canvas.fill(
+                    Path(ellipseIn: CGRect(x: baseX - coreR, y: baseY - coreR,
+                                           width: coreR * 2, height: coreR * 2)),
+                    with: .color(Color(red: 1.0, green: 0.62, blue: 0.35))
+                )
             }
-            .frame(width: 20, height: 22, alignment: .bottom)
         }
     }
 }
