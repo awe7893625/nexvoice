@@ -60,7 +60,7 @@ final class CompactRecorderHUD {
     private func makePanel() -> NSPanel {
         let root = CompactRecorderView(model: model)
         let panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 80, height: 36),
+            contentRect: NSRect(x: 0, y: 0, width: 100, height: 44),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false
@@ -68,7 +68,10 @@ final class CompactRecorderHUD {
         panel.level = .floating
         panel.isOpaque = false
         panel.backgroundColor = .clear
-        panel.hasShadow = true
+        // No window shadow: the HUD is frameless (no card/pill behind the
+        // visualization), and AppKit's shadow would trace the animating
+        // glow shapes and leave artifacts.
+        panel.hasShadow = false
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient]
         panel.contentView = NSHostingView(rootView: root)
         panel.hidesOnDeactivate = false
@@ -96,7 +99,7 @@ final class CompactRecorderHUD {
         // terminal's boxed card); shorter styles just bottom-anchor their
         // content within this transparent area, so nothing looks broken.
         let panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 380, height: 130),
+            contentRect: NSRect(x: 0, y: 0, width: 440, height: 200),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false
@@ -104,7 +107,9 @@ final class CompactRecorderHUD {
         panel.level = .floating
         panel.isOpaque = false
         panel.backgroundColor = .clear
-        panel.hasShadow = true
+        // Caption cards draw their own SwiftUI shadows; the AppKit window
+        // shadow would trace the animating text shape and leave artifacts.
+        panel.hasShadow = false
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient]
         panel.contentView = NSHostingView(rootView: SubtitleBubbleView(model: model))
         panel.hidesOnDeactivate = false
@@ -158,29 +163,28 @@ private final class RecorderHUDModel: ObservableObject {
 private struct CompactRecorderView: View {
     @ObservedObject var model: RecorderHUDModel
 
+    // Frameless by design: no pill/card behind any style -- each
+    // visualization floats directly on screen. A tight dark drop shadow
+    // keeps white elements (bars, dots, wave lines) readable over light
+    // backgrounds without reading as a box.
     var body: some View {
         Group {
             if model.isBusy {
                 Text(model.statusText)
-                    .font(.system(size: 10.5, weight: .medium, design: .rounded))
-                    .foregroundStyle(Color.white.opacity(0.9))
+                    .font(.system(size: 11, weight: .semibold, design: .rounded))
+                    .foregroundStyle(Color.white)
                     .lineLimit(1)
                     .minimumScaleFactor(0.7)
+                    .shadow(color: .black.opacity(0.85), radius: 2)
+                    .shadow(color: .black.opacity(0.6), radius: 6)
             } else {
                 HUDVisualization(style: model.style, levels: model.levels)
+                    .shadow(color: .black.opacity(0.55), radius: 2.5)
             }
         }
-        .frame(width: 64, height: 24)
-        .padding(.horizontal, 8)
-        .frame(width: 80, height: 36)
-        .background(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(Color(red: 0.055, green: 0.055, blue: 0.06).opacity(0.98))
-                .overlay {
-                    RoundedRectangle(cornerRadius: 18, style: .continuous)
-                        .stroke(Color.white.opacity(0.2), lineWidth: 1)
-                }
-        )
+        .frame(width: 84, height: 32)
+        .padding(.horizontal, 10)
+        .frame(width: 100, height: 44)
     }
 }
 
@@ -213,7 +217,7 @@ struct HUDVisualization: View {
                 ZenIncense(level: levels.last ?? 0)
             }
         }
-        .frame(width: 64, height: 22)
+        .frame(width: 84, height: 32)
     }
 }
 
@@ -248,7 +252,7 @@ private struct PrecisionWaveform: View {
                     let magnitude = Self.baseHeights[index] * (0.3 + level * 0.9) * energy
                     Capsule()
                         .fill(Self.colors[index])
-                        .frame(width: 2.4, height: max(2, 18 * magnitude))
+                        .frame(width: 3.5, height: max(3, 26 * magnitude))
                         .shadow(color: Self.colors[index].opacity(0.5), radius: 2)
                 }
             }
@@ -269,7 +273,7 @@ private struct QuantumOrb: View {
             let glow2 = 0.8 + 0.5 * sin(t * (2 * .pi / 1.5) + 1.0)
             let core = 0.85 + 0.25 * sin(t * (2 * .pi / 0.4))
             let energy = 0.5 + level * 0.8
-            let size: CGFloat = 20
+            let size: CGFloat = 30
 
             ZStack {
                 Circle()
@@ -459,7 +463,7 @@ private struct SubtitleBubbleView: View {
             Spacer(minLength: 0)
             content
         }
-        .frame(width: 380, height: 130, alignment: .bottom)
+        .frame(width: 440, height: 200, alignment: .bottom)
     }
 
     @ViewBuilder
@@ -522,26 +526,34 @@ private struct BubbleSubtitle: View {
 /// don't grow the panel unbounded.
 private struct FluidGlowSubtitle: View {
     let text: String
-    private static let visibleWindow = 26
+    private static let visibleWindow = 40
     private static let activeTailCount = 4
 
     var body: some View {
+        Text(attributedText)
+            .lineLimit(3)
+            .multilineTextAlignment(.center)
+            .padding(.horizontal, 20)
+            .padding(.vertical, 14)
+            .frame(maxWidth: 400)
+            .background(Color.black.opacity(0.85), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).stroke(Color.white.opacity(0.15), lineWidth: 1))
+            .shadow(color: .black.opacity(0.6), radius: 15)
+    }
+
+    private var attributedText: AttributedString {
+        var attrStr = AttributedString()
         let characters = Array(text.suffix(Self.visibleWindow))
         let activeStart = max(0, characters.count - Self.activeTailCount)
-        HStack(spacing: 0) {
-            ForEach(characters.indices, id: \.self) { index in
-                let isActive = index >= activeStart
-                Text(String(characters[index]))
-                    .font(.system(size: 15, weight: .medium, design: .rounded))
-                    .foregroundStyle(isActive ? JewelTone.green : Color.white.opacity(0.85))
-                    .shadow(color: isActive ? JewelTone.green.opacity(0.7) : .clear, radius: isActive ? 6 : 0)
-                    .scaleEffect(isActive ? 1.05 : 1.0)
-            }
+        
+        for (index, char) in characters.enumerated() {
+            let isActive = index >= activeStart
+            var charAttr = AttributedString(String(char))
+            charAttr.font = .system(size: 18, weight: isActive ? .bold : .medium, design: .rounded)
+            charAttr.foregroundColor = isActive ? JewelTone.green : .white.opacity(0.9)
+            attrStr.append(charAttr)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 6)
-        .frame(maxWidth: 360, minHeight: 30)
-        .background(.black.opacity(0.75), in: Capsule())
+        return attrStr
     }
 }
 
@@ -572,22 +584,24 @@ private struct TerminalSubtitle: View {
     var body: some View {
         TimelineView(.animation(minimumInterval: 0.4)) { context in
             let blinkOn = Int(context.date.timeIntervalSinceReferenceDate / 0.4).isMultiple(of: 2)
-            HStack(spacing: 4) {
+            HStack(alignment: .bottom, spacing: 6) {
                 Text(text)
-                    .font(.system(size: 13, design: .monospaced))
+                    .font(.system(size: 16, design: .monospaced))
                     .foregroundStyle(Color(white: 0.92))
-                    .lineLimit(1)
+                    .lineLimit(3)
                     .truncationMode(.head)
+                    .fixedSize(horizontal: false, vertical: true)
                 Rectangle()
                     .fill(JewelTone.green)
-                    .frame(width: 7, height: 15)
+                    .frame(width: 8, height: 18)
                     .opacity(blinkOn ? 1 : 0)
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 10)
-            .frame(maxWidth: 360, alignment: .leading)
-            .background(Color(white: 0.094), in: RoundedRectangle(cornerRadius: 12))
-            .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.white.opacity(0.12), lineWidth: 1))
+            .padding(.horizontal, 20)
+            .padding(.vertical, 16)
+            .frame(maxWidth: 400, alignment: .leading)
+            .background(Color(white: 0.08), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(Color.white.opacity(0.15), lineWidth: 1))
+            .shadow(color: .black.opacity(0.6), radius: 20)
         }
     }
 }
@@ -625,10 +639,10 @@ private struct SpatialBlurSubtitle: View {
 
     private static func style(forDepth depth: Int) -> Depth {
         switch depth {
-        case 0: Depth(fontSize: 16, color: .white, blur: 0, opacity: 1)
-        case 1: Depth(fontSize: 13, color: .white.opacity(0.7), blur: 1, opacity: 0.55)
-        case 2: Depth(fontSize: 11, color: .white.opacity(0.4), blur: 2, opacity: 0.2)
-        default: Depth(fontSize: 10, color: .white.opacity(0.2), blur: 3, opacity: 0.08)
+        case 0: Depth(fontSize: 24, color: .white, blur: 0, opacity: 1.0)
+        case 1: Depth(fontSize: 18, color: .white.opacity(0.8), blur: 2, opacity: 0.6)
+        case 2: Depth(fontSize: 14, color: .white.opacity(0.4), blur: 4, opacity: 0.25)
+        default: Depth(fontSize: 12, color: .white.opacity(0.2), blur: 8, opacity: 0.05)
         }
     }
 
@@ -727,7 +741,7 @@ private struct PencilSketch: View {
     var body: some View {
         TimelineView(.animation(minimumInterval: 0.03)) { context in
             let t = context.date.timeIntervalSinceReferenceDate
-            let size: CGFloat = 20 + level * 2
+            let size: CGFloat = 30 + level * 2
             ZStack {
                 ForEach(Self.rings.indices, id: \.self) { index in
                     let ring = Self.rings[index]

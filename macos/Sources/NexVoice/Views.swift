@@ -818,13 +818,23 @@ private struct SettingsPage: View {
                                 model.productPreferences.hudStyle = style
                             } label: {
                                 VStack(spacing: 7) {
+                                    // Neutral stage stands in for "your screen"
+                                    // so white elements stay visible; the live
+                                    // HUD itself is frameless.
                                     HUDVisualization(
                                         style: style,
                                         levels: [0.12, 0.35, 0.7, 0.42, 0.9, 0.5, 0.22, 0.65, 0.38, 0.78, 0.3]
                                     )
                                     .padding(.horizontal, 8)
-                                    .frame(height: 30)
-                                    .background(Color.black.opacity(0.94), in: Capsule())
+                                    .frame(height: 34)
+                                    .frame(maxWidth: .infinity)
+                                    .background(
+                                        LinearGradient(
+                                            colors: [Color(white: 0.17), Color(white: 0.08)],
+                                            startPoint: .top, endPoint: .bottom
+                                        ),
+                                        in: RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                    )
                                     Text(style.displayName)
                                         .font(.system(size: 10.5, weight: .semibold))
                                         .foregroundStyle(NV.ink)
@@ -870,7 +880,13 @@ private struct SettingsPage: View {
                                         .scaleEffect(0.62)
                                         .frame(height: 40)
                                         .frame(maxWidth: .infinity)
-                                        .background(Color.black.opacity(0.94), in: RoundedRectangle(cornerRadius: 10))
+                                        .background(
+                                            LinearGradient(
+                                                colors: [Color(white: 0.17), Color(white: 0.08)],
+                                                startPoint: .top, endPoint: .bottom
+                                            ),
+                                            in: RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                        )
                                         .clipped()
                                     Text(style.displayName)
                                         .font(.system(size: 10.5, weight: .semibold))
