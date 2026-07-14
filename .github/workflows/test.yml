@@ -1,0 +1,28 @@
+name: test
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  swift:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Swift tests
+        working-directory: macos
+        run: swift test
+      - name: Shell and plist checks
+        run: |
+          zsh -n macos/scripts/build-app.sh macos/scripts/install-app.sh
+          plutil -lint macos/Info.plist macos/NexVoice.entitlements
+          git diff --check
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Python syntax
+        run: python3 -m compileall -q server runtime
+      - name: Runtime contract tests
+        working-directory: runtime
+        run: python3 -m unittest -v test_runtime_contract.py

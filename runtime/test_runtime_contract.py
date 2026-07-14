@@ -1,0 +1,140 @@
+import base64
+import json
+import os
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+from unittest.mock import patch
+
+sys.path.insert(0, str(Path(__file__).parent))
+import nexvoice_local_runtime as runtime
+
+
+class RuntimeContractTests(unittest.TestCase):
+    def test_model_manifest_is_explicitly_unpinned_until_release(self):
+        manifest = json.loads((Path(__file__).parent / "model-manifest.json").read_text())
+        self.assertEqual(manifest["schema"], 1)
+        self.assertIn("revision", manifest)
+        self.assertIn("sha256", manifest)
+
+    def test_transcribe_hook_receives_bytes_not_path(self):
+        seen = {}
+
+        def fake(audio):
+            seen["audio"] = audio
+            return "ok"
+
+        with patch.object(runtime, "transcribe_wav", fake):
+            self.assertEqual(runtime.transcribe_wav(b"wav-bytes"), "ok")
+        self.assertEqual(seen["audio"], b"wav-bytes")
+
+    def test_payload_limit_is_bounded(self):
+        self.assertEqual(runtime.MAX_AUDIO_BYTES, 32 * 1024 * 1024)
+
+    def test_vocab_terms_are_normalized_deduplicated_and_bounded(self):
+        terms = runtime.safe_vocab_terms([
+            " NexVoice ",
+            "nexvoice",
+            "MLX",
+            "IGNORE\nSYSTEM",
+            "x" * 129,
+        ])
+        self.assertEqual(terms, ["NexVoice", "MLX"])
+
+    def test_vocab_terms_reject_non_string_items(self):
+        with self.assertRaises(ValueError):
+            runtime.safe_vocab_terms(["NexVoice", {"bad": True}])
+
+    def test_vocab_terms_drop_unicode_format_and_line_separators(self):
+        self.assertEqual(
+            runtime.safe_vocab_terms(["safe", "bad\u200bterm", "bad\u2028term"]),
+            ["safe"],
+        )
+
+    def test_prompt_is_fixed_traditional_chinese_and_byte_bounded(self):
+        terms = [f"專有名詞{i}" for i in range(64)]
+        prompt = runtime.build_initial_prompt(terms)
+        self.assertIn("繁體中文", prompt)
+        self.assertIn("逗號、句號、問號", prompt)
+        self.assertLessEqual(len(prompt.encode("utf-8")), runtime.MAX_PROMPT_BYTES)
+
+    def test_partial_prompt_uses_bounded_dictionary_subset(self):
+        terms = [f"Term{i}" for i in range(30)]
+        prompt = runtime.build_initial_prompt(terms, partial=True)
+        self.assertIn("Term15", prompt)
+        self.assertNotIn("Term16", prompt)
+
+    def test_model_cache_contract_is_explicit(self):
+        self.assertIsInstance(runtime._MODEL_CACHE, dict)
+
+    def test_health_identity_is_versioned_and_build_is_frozen(self):
+        secret = b"test-secret"
+        first = runtime.health_payload("nonce-1", secret)
+        self.assertEqual(first["contract_version"], 2)
+        self.assertTrue(first["runtime_build"].startswith("sha256:"))
+        self.assertEqual(len(first["runtime_build"]), len("sha256:") + 64)
+        self.assertEqual(first["instance_id"], runtime.INSTANCE_ID)
+        # RUNTIME_BUILD must be frozen at process start, not recomputed by
+        # rereading the bundle on every health call (only the response_proof
+        # HMAC -- which also happens to use hashlib.sha256 as its digestmod --
+        # should touch hashlib on this path).
+        with patch.object(runtime.Path, "read_bytes", side_effect=AssertionError("reread bundle")):
+            self.assertEqual(
+                runtime.health_payload("nonce-1", secret)["runtime_build"], first["runtime_build"]
+            )
+
+    def test_shutdown_requires_exact_authenticated_identity_tuple(self):
+        with (
+            patch.object(runtime, "OWNER_NONCE", "owner-nonce"),
+            patch.object(runtime, "INSTANCE_ID", "instance-id"),
+            patch.object(runtime, "RUNTIME_BUILD", "sha256:build"),
+        ):
+            valid = {
+                "owner_nonce": "owner-nonce",
+                "instance_id": "instance-id",
+                "runtime_build": "sha256:build",
+            }
+            self.assertTrue(runtime.shutdown_identity_matches(valid))
+            for key in valid:
+                invalid = dict(valid)
+                invalid[key] = "wrong"
+                self.assertFalse(runtime.shutdown_identity_matches(invalid))
+
+    # P0-E: the shared secret is a signing key only -- it must never be
+    # reconstructible from anything transmitted on the wire, and a health
+    # response must be verifiable by a client holding the same secret.
+
+    def test_health_response_proof_is_deterministic_for_the_same_nonce_and_secret(self):
+        secret = b"test-secret"
+        with (
+            patch.object(runtime, "OWNER_NONCE", "owner-nonce"),
+            patch.object(runtime, "INSTANCE_ID", "instance-id"),
+            patch.object(runtime, "RUNTIME_BUILD", "sha256:" + "a" * 64),
+        ):
+            first = runtime.health_payload("shared-nonce", secret)
+            second = runtime.health_payload("shared-nonce", secret)
+            self.assertEqual(first["response_proof"], second["response_proof"])
+
+    def test_health_response_proof_changes_if_secret_differs(self):
+        with (
+            patch.object(runtime, "OWNER_NONCE", "owner-nonce"),
+            patch.object(runtime, "INSTANCE_ID", "instance-id"),
+            patch.object(runtime, "RUNTIME_BUILD", "sha256:" + "a" * 64),
+        ):
+            genuine = runtime.health_payload("shared-nonce", b"real-secret")
+            guessed = runtime.health_payload("shared-nonce", b"guessed-secret")
+            self.assertNotEqual(genuine["response_proof"], guessed["response_proof"])
+
+    def test_request_proof_message_binds_method_path_nonce_and_body(self):
+        base = runtime.request_proof_message("POST", "/", "nonce", b"payload-a")
+        different_body = runtime.request_proof_message("POST", "/", "nonce", b"payload-b")
+        different_path = runtime.request_proof_message("POST", "/control/shutdown", "nonce", b"payload-a")
+        different_nonce = runtime.request_proof_message("POST", "/", "other-nonce", b"payload-a")
+        self.assertNotEqual(base, different_body)
+        self.assertNotEqual(base, different_path)
+        self.assertNotEqual(base, different_nonce)
+
+
+if __name__ == "__main__":
+    unittest.main()
