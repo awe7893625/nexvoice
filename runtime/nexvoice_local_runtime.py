@@ -23,6 +23,15 @@ import wave
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+# mlx-whisper shells out to `ffmpeg` for audio decoding. When the app is
+# launched from Finder/Dock, the inherited PATH is the bare system default
+# (/usr/bin:/bin:/usr/sbin:/sbin) and Homebrew's ffmpeg is invisible, which
+# surfaces as FileNotFoundError on every transcription. Resolution must not
+# depend on how the app was launched, so extend PATH here at process start.
+for _extra_bin in ("/opt/homebrew/bin", "/usr/local/bin"):
+    if _extra_bin not in os.environ.get("PATH", "").split(os.pathsep) and os.path.isdir(_extra_bin):
+        os.environ["PATH"] = os.environ.get("PATH", "") + os.pathsep + _extra_bin
+
 MAX_AUDIO_BYTES = 32 * 1024 * 1024
 MAX_VOCAB_TERMS = 64
 MAX_VOCAB_TERM_BYTES = 128
