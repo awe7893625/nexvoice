@@ -414,8 +414,14 @@ private struct SiriOrb: View {
                     )
                     .frame(width: size, height: size)
                     .scaleEffect(0.55 + energy * 0.25)
+                // Thin glassy rim gives the orb a defined sphere edge.
+                Circle()
+                    .stroke(.white.opacity(0.45), lineWidth: 1)
+                    .frame(width: size, height: size)
+                    .blur(radius: 0.6)
             }
             .frame(width: size * 1.9, height: size * 1.9)
+            .offset(y: sin(t * 0.9) * 1.6)
             .shadow(color: .purple.opacity(0.5), radius: 6 + level * 8)
         }
     }
@@ -495,20 +501,22 @@ private struct MinimalDots: View {
         TimelineView(.animation(minimumInterval: 0.04)) { context in
             let t = context.date.timeIntervalSinceReferenceDate
             let level = levels.last ?? 0
-            HStack(spacing: 8) {
+            // One coherent wave travelling left-to-right (uniform dot size,
+            // synchronized bob + brightness) reads far more deliberate than
+            // independently jittering dots.
+            HStack(spacing: 9) {
                 ForEach(0..<5, id: \.self) { index in
-                    let source = levels.indices.contains(index * 2) ? levels[index * 2] : 0.05
-                    let bounce = sin(t * 4.2 + Double(index) * 0.9)
-                    let size = 6 + source * 8
+                    let wave = sin(t * 4.4 - Double(index) * 0.85)
                     Circle()
                         .fill(.white)
-                        .frame(width: size, height: size)
-                        .offset(y: -bounce * (3 + (level + source) * 9))
-                        .opacity(0.7 + 0.3 * (0.5 + 0.5 * bounce))
-                        .animation(.easeOut(duration: 0.08), value: source)
+                        .frame(width: 7, height: 7)
+                        .scaleEffect(0.8 + 0.25 * (0.5 + 0.5 * wave) + level * 0.35)
+                        .offset(y: -wave * (3.5 + level * 10))
+                        .opacity(0.6 + 0.4 * (0.5 + 0.5 * wave))
                 }
             }
-            .shadow(color: .white.opacity(0.5), radius: 4)
+            .shadow(color: .white.opacity(0.6), radius: 5)
+            .shadow(color: .black.opacity(0.3), radius: 1)
         }
     }
 }
@@ -730,16 +738,19 @@ private struct WaveformBars: View {
             let t = context.date.timeIntervalSinceReferenceDate
             HStack(alignment: .center, spacing: 3.5) {
                 ForEach(Array(levels.enumerated()), id: \.offset) { index, level in
-                    let idle = 0.5 + 0.5 * sin(t * 2.6 + Double(index) * 0.55)
-                    let emphasis = 0.78 + 0.22 * sin(Double(index) * 0.8)
+                    // Symmetric arch envelope (tall center, short edges) +
+                    // a travelling idle wave keeps it composed, not noisy.
+                    let position = Double(index) / Double(max(1, levels.count - 1))
+                    let envelope = 0.45 + 0.55 * sin(position * .pi)
+                    let idle = 0.5 + 0.5 * sin(t * 2.8 - Double(index) * 0.6)
                     Capsule()
                         .fill(
                             LinearGradient(
-                                colors: [.white, Color(red: 0.62, green: 0.80, blue: 1.0)],
+                                colors: [.white, Color(red: 0.56, green: 0.75, blue: 1.0)],
                                 startPoint: .top, endPoint: .bottom
                             )
                         )
-                        .frame(width: 3.5, height: 5 + 3 * idle + 34 * min(1, level * emphasis))
+                        .frame(width: 3.5, height: (5 + 3 * idle + 36 * min(1, level)) * envelope + 3)
                         .animation(.linear(duration: 0.07), value: level)
                 }
             }
@@ -873,60 +884,82 @@ private struct ZenIncense: View {
     var body: some View {
         TimelineView(.animation(minimumInterval: 0.04)) { context in
             let t = context.date.timeIntervalSinceReferenceDate
-            let energy = 0.65 + level * 0.5
+            let energy = 0.7 + level * 0.4
             Canvas { canvas, size in
-                let baseX = size.width / 2
-                let baseY = size.height - 9
-                let rise = size.height - 16
+                let baseX = Double(size.width) / 2
+                let baseY = Double(size.height) - 9
+                let rise = (Double(size.height) - 13) * energy
 
-                // Two staggered continuous smoke streams: particles are born
-                // at the ember, swell/thin/fade as they climb, amber near the
-                // source cooling to grey-white above.
-                canvas.drawLayer { layer in
-                    layer.addFilter(.blur(radius: 2.2))
-                    for stream in 0..<2 {
-                        let phase = Double(stream) * 2.6
-                        let drift = stream == 0 ? 1.0 : -0.72
-                        let count = 22
-                        for i in 0..<count {
-                            let s = ((Double(i) / Double(count)) + t / 5.5 + phase)
-                                .truncatingRemainder(dividingBy: 1)
-                            let sway = sin(s * .pi * 2.6 + t * 1.3 + phase) * (2 + s * 12) * drift
-                            let x = baseX + sway
-                            let y = baseY - 5 - s * rise * energy
-                            let fadeIn = min(1, s / 0.12)
-                            let fadeOut = max(0, 1 - s * 1.15)
-                            let alpha = 0.45 * fadeIn * fadeOut
-                            let radius = 1.6 + s * 4.8
-                            let warm = max(0, 1 - s * 3.2)
+                // A real incense trail is one continuous silk ribbon, not a
+                // row of puffs: low-frequency meander that widens with
+                // height, a faster shimmer, and a curl that only appears
+                // near the top. All phase terms run negative against s so
+                // the waveform visibly travels upward.
+                func smokeX(_ s: Double, phase: Double, drift: Double) -> Double {
+                    let meander = sin(s * 3.4 - t * 0.85 + phase) * (1.0 + 10.0 * s)
+                    let shimmer = sin(s * 9.0 - t * 2.2 + phase * 1.7) * 2.2 * s
+                    let curl = sin(s * 16 - t * 1.15 + phase) * 3.8 * pow(s, 3)
+                    let lean = sin(t * 0.31 + phase) * 4.0 * s
+                    return baseX + (meander + shimmer + curl) * drift + lean
+                }
+
+                // (drift, alpha, widthScale, blur, phase): a defined core
+                // ribbon, a soft haze hugging it, and a fainter counter-
+                // phase wisp that separates and rejoins.
+                let ribbons: [(Double, Double, Double, Double, Double)] = [
+                    (1.0, 0.60, 1.0, 1.1, 0.0),
+                    (1.0, 0.26, 2.4, 3.6, 0.0),
+                    (-0.82, 0.30, 0.85, 1.6, 2.3),
+                ]
+                for (drift, alphaScale, widthScale, blur, phase) in ribbons {
+                    canvas.drawLayer { layer in
+                        layer.addFilter(.blur(radius: blur))
+                        let steps = 46
+                        var prev = CGPoint(x: smokeX(0, phase: phase, drift: drift), y: baseY - 4)
+                        for i in 1...steps {
+                            let s = Double(i) / Double(steps)
+                            let point = CGPoint(
+                                x: smokeX(s, phase: phase, drift: drift),
+                                y: baseY - 4 - s * rise
+                            )
+                            var segment = Path()
+                            segment.move(to: prev)
+                            segment.addLine(to: point)
+                            let fadeIn = min(1, s / 0.08)
+                            let fadeOut = pow(max(0, 1 - s), 0.75)
+                            let warm = max(0, 1 - s * 4)
                             let color = Color(
-                                red: 0.86 + 0.1 * warm,
-                                green: 0.86 - 0.38 * warm,
-                                blue: 0.86 - 0.58 * warm
+                                red: 0.88 + 0.08 * warm,
+                                green: 0.88 - 0.30 * warm,
+                                blue: 0.90 - 0.50 * warm
                             )
-                            layer.fill(
-                                Path(ellipseIn: CGRect(x: x - radius, y: y - radius,
-                                                       width: radius * 2, height: radius * 2)),
-                                with: .color(color.opacity(alpha))
+                            layer.stroke(
+                                segment,
+                                with: .color(color.opacity(alphaScale * fadeIn * fadeOut)),
+                                style: StrokeStyle(
+                                    lineWidth: (0.9 + 4.2 * pow(s, 1.25)) * widthScale,
+                                    lineCap: .round
+                                )
                             )
+                            prev = point
                         }
                     }
                 }
 
-                // Breathing ember: layered glow + hot core.
-                let breathe = 0.7 + 0.3 * sin(t * 2.1)
-                for (radius, alpha) in [(9.0, 0.16), (5.5, 0.38)] {
+                // Breathing ember with an organic (double-sine) flicker.
+                let breathe = 0.72 + 0.28 * sin(t * 2.0 + sin(t * 0.7) * 1.4)
+                for (radius, alpha) in [(8.0, 0.14), (4.8, 0.34)] {
                     let r = radius * breathe
                     canvas.fill(
                         Path(ellipseIn: CGRect(x: baseX - r, y: baseY - r, width: r * 2, height: r * 2)),
                         with: .color(Self.emberColor.opacity(alpha))
                     )
                 }
-                let coreR = 2.6 * (0.85 + 0.15 * breathe) + level * 1.5
+                let coreR = 2.4 * (0.85 + 0.15 * breathe) + level * 1.4
                 canvas.fill(
                     Path(ellipseIn: CGRect(x: baseX - coreR, y: baseY - coreR,
                                            width: coreR * 2, height: coreR * 2)),
-                    with: .color(Color(red: 1.0, green: 0.62, blue: 0.35))
+                    with: .color(Color(red: 1.0, green: 0.66, blue: 0.38))
                 )
             }
         }
