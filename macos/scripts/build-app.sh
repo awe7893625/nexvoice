@@ -61,16 +61,45 @@ done
 # gives a designated requirement anchored to the cert + bundle id instead,
 # which stays constant across rebuilds. Open-source contributors may use an
 # explicit dev build with ad-hoc signing; acceptance/install builds fail closed.
+# Identity lookups are scoped to the user's own login keychain only. Other
+# keychains on the search list (e.g. a dedicated release-signing vault) may
+# hold identities whose private key is deliberately locked behind a separate
+# password that isn't meant to be typed into an interactive/unattended dev
+# build; reaching into those triggers a Keychain password prompt for a
+# password the person building may not even have. Login-keychain-only means
+# an unavailable/unfamiliar password never blocks or prompts a dev build.
+LOGIN_KEYCHAIN="$HOME/Library/Keychains/login.keychain-db"
+
 SIGN_IDENTITY=${NEXVOICE_SIGN_IDENTITY:-}
 if [[ -z "$SIGN_IDENTITY" && "$BUILD_KIND" != "dev" ]]; then
-  SIGN_IDENTITY=$(security find-identity -v -p codesigning 2>/dev/null \
+  SIGN_IDENTITY=$(security find-identity -v -p codesigning "$LOGIN_KEYCHAIN" 2>/dev/null \
     | sed -n 's/.*"\(Developer ID Application:[^"]*\)".*/\1/p' \
     | head -1)
 fi
-if [[ -z "$SIGN_IDENTITY" ]] || ! security find-identity -v -p codesigning 2>/dev/null | grep -qF "$SIGN_IDENTITY"; then
+if [[ -z "$SIGN_IDENTITY" ]] || ! security find-identity -v -p codesigning "$LOGIN_KEYCHAIN" 2>/dev/null | grep -qF "$SIGN_IDENTITY"; then
   if [[ "$BUILD_KIND" == "dev" ]]; then
-    echo "warning: Developer ID unavailable; creating an ad-hoc dev build" >&2
-    SIGN_IDENTITY="-"
+    # Prefer a real identity in the login keychain over ad-hoc: ad-hoc
+    # (`--sign -`) pins TCC's designated requirement to the executable's
+    # cdhash, which changes on every rebuild and silently re-resets every
+    # Microphone/Accessibility grant the user already made. A real cert
+    # (Developer ID Application, or failing that whatever codesigning
+    # identity is available in the login keychain) anchors the requirement
+    # to the cert + bundle id instead, so it survives rebuilds. Contributors
+    # with no cert in their login keychain fall through to ad-hoc.
+    SIGN_IDENTITY=$(security find-identity -v -p codesigning "$LOGIN_KEYCHAIN" 2>/dev/null \
+      | sed -n 's/.*"\(Developer ID Application:[^"]*\)".*/\1/p' \
+      | head -1)
+    if [[ -z "$SIGN_IDENTITY" ]]; then
+      SIGN_IDENTITY=$(security find-identity -v -p codesigning "$LOGIN_KEYCHAIN" 2>/dev/null \
+        | sed -n 's/.*"\([^"]*\)".*/\1/p' \
+        | head -1)
+    fi
+    if [[ -z "$SIGN_IDENTITY" ]]; then
+      echo "warning: no codesigning identity in login keychain; creating an ad-hoc dev build (permission grants will reset on every rebuild)" >&2
+      SIGN_IDENTITY="-"
+    else
+      echo "note: dev build signed with login-keychain identity '$SIGN_IDENTITY' (not ad-hoc) so TCC grants survive rebuilds" >&2
+    fi
   else
     echo "error: acceptance build requires NEXVOICE_SIGN_IDENTITY or an installed Developer ID Application certificate" >&2
     exit 1

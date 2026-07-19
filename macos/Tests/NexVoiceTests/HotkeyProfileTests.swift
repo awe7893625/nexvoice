@@ -7,7 +7,15 @@ final class HotkeyProfileTests: XCTestCase {
         let suiteName = "NexVoiceTests.HotkeyProfile.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suiteName)!
         defaults.removePersistentDomain(forName: suiteName)
-        defer { defaults.removePersistentDomain(forName: suiteName) }
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+            // removePersistentDomain only clears cfprefsd's in-memory cache; it
+            // does not reliably delete the backing plist cfprefsd already wrote
+            // to ~/Library/Preferences, so every run leaked one file per test.
+            let plistURL = FileManager.default.homeDirectoryForCurrentUser
+                .appendingPathComponent("Library/Preferences/\(suiteName).plist")
+            try? FileManager.default.removeItem(at: plistURL)
+        }
         try body(defaults, HotkeyProfileStore(defaults: defaults))
     }
 

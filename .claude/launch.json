@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "nexvoice-local-runtime",
+      "runtimeExecutable": "/Users/ray/.cache/nexvoice/runtime/.venv/bin/python3",
+      "runtimeArgs": ["runtime/nexvoice_local_runtime.py"],
+      "port": 5112
+    },
+    {
+      "name": "nexvoice-legacy-gateway",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["server/app.py"],
+      "port": 5111
+    }
+  ]
+}
