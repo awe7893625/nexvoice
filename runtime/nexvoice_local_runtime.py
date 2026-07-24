@@ -14,6 +14,7 @@ import importlib
 import importlib.metadata
 import json
 import os
+import re
 import tempfile
 import threading
 import time
@@ -38,6 +39,11 @@ MAX_VOCAB_TERM_BYTES = 128
 MAX_VOCAB_TOTAL_BYTES = 1536
 MAX_PROMPT_BYTES = 2048
 SILENCE_PEAK_THRESHOLD = 0.03
+# Whisper's anti-repetition mechanism: when greedy (t=0) decoding fails the
+# compression-ratio check (the signature of a "可以看到，可以看到，…" loop),
+# decode_with_fallback retries at the next temperature. A scalar temperature=0
+# disables that ladder entirely and returns the looped text as-is.
+TEMPERATURE_FALLBACK = (0.0, 0.2, 0.4, 0.6, 0.8, 1.0)
 TOKEN = Path.home() / ".cache" / "nexvoice" / "local-runtime.token"
 CONTRACT_VERSION = 2
 # Freeze identity at process start. If an installer later replaces the bundle
@@ -196,6 +202,29 @@ def build_initial_prompt(vocab_terms: list[str], *, partial: bool = False) -> st
     return primer
 
 
+# A phrase (2-32 chars) repeated 3+ times back-to-back over a span of ≥10
+# chars is a decoder loop, never real dictation. Short bursts ("哈哈哈哈哈哈")
+# stay untouched via the span floor.
+_REPEAT_RUN = re.compile(r"(.{2,32}?)(?:\1){2,}", re.DOTALL)
+
+
+def collapse_repetition_loops(text: str) -> str:
+    """Collapse decoder repetition loops the temperature ladder didn't break."""
+    # Loops that split multi-byte tokens across segments leave U+FFFD noise.
+    text = text.replace("�", "")
+
+    def _collapse(match: re.Match[str]) -> str:
+        if len(match.group(0)) < 10:
+            return match.group(0)
+        return match.group(1)
+
+    prev = None
+    while prev != text:
+        prev = text
+        text = _REPEAT_RUN.sub(_collapse, text)
+    return text
+
+
 def transcribe_wav(
     audio: bytes,
     *,
@@ -247,7 +276,7 @@ def transcribe_wav(
                     handle.name,
                     path_or_hf_repo=model,
                     language=os.environ.get("NEXVOICE_LANGUAGE", "zh"),
-                    temperature=0,
+                    temperature=TEMPERATURE_FALLBACK,
                     verbose=False,
                     condition_on_previous_text=False,
                     initial_prompt=prompt,
@@ -260,7 +289,7 @@ def transcribe_wav(
     finally:
         if quality == "partial" and partial_gate_acquired:
             _PARTIAL_GATE.release()
-    return str(result.get("text", "")).strip()
+    return collapse_repetition_loops(str(result.get("text", "")).strip())
 
 
 class Handler(BaseHTTPRequestHandler):

@@ -126,6 +126,53 @@ class RuntimeContractTests(unittest.TestCase):
             guessed = runtime.health_payload("shared-nonce", b"guessed-secret")
             self.assertNotEqual(genuine["response_proof"], guessed["response_proof"])
 
+    def test_repetition_loop_is_collapsed_and_replacement_chars_removed(self):
+        loop = "可以看到，" * 40
+        text = f"AI傳過來的圖片看得到，{loop}可以全部分析出它有哪些功能。"
+        cleaned = runtime.collapse_repetition_loops(text)
+        self.assertIn("AI傳過來的圖片看得到，", cleaned)
+        self.assertIn("可以全部分析出它有哪些功能。", cleaned)
+        self.assertLessEqual(cleaned.count("可以看到"), 2)
+        garbled = "可以看到�可以看到�可以看到�可以看到"
+        self.assertNotIn("�", runtime.collapse_repetition_loops(garbled))
+
+    def test_normal_transcript_is_not_collapsed(self):
+        text = "他們可以傳圖片，可以傳檔案，可以下載。AI傳過來的圖片看得到。"
+        self.assertEqual(runtime.collapse_repetition_loops(text), text)
+        short_repeat = "哈哈哈哈哈哈"
+        self.assertEqual(runtime.collapse_repetition_loops(short_repeat), short_repeat)
+
+    def test_transcribe_uses_temperature_fallback_ladder(self):
+        self.assertEqual(
+            runtime.TEMPERATURE_FALLBACK, (0.0, 0.2, 0.4, 0.6, 0.8, 1.0)
+        )
+        import array
+        import io
+        import types
+        import wave as wave_mod
+
+        buf = io.BytesIO()
+        with wave_mod.open(buf, "wb") as w:
+            w.setnchannels(1)
+            w.setsampwidth(2)
+            w.setframerate(16000)
+            w.writeframes(array.array("h", [20000, -20000] * 1600).tobytes())
+        audio = buf.getvalue()
+
+        seen = {}
+
+        def fake_transcribe(path, **kwargs):
+            seen.update(kwargs)
+            return {"text": "可以看到，" * 40 + "結束。"}
+
+        fake = types.ModuleType("mlx_whisper")
+        fake.transcribe = fake_transcribe
+        with patch.dict(sys.modules, {"mlx_whisper": fake}):
+            text = runtime.transcribe_wav(audio)
+        self.assertEqual(seen["temperature"], runtime.TEMPERATURE_FALLBACK)
+        self.assertFalse(seen["condition_on_previous_text"])
+        self.assertLessEqual(text.count("可以看到"), 2)
+
     def test_request_proof_message_binds_method_path_nonce_and_body(self):
         base = runtime.request_proof_message("POST", "/", "nonce", b"payload-a")
         different_body = runtime.request_proof_message("POST", "/", "nonce", b"payload-b")
