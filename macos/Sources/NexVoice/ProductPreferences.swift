@@ -11,29 +11,17 @@ enum VoiceMode: String, CaseIterable, Codable, Sendable {
 }
 
 enum HUDStyle: String, CaseIterable, Codable, Sendable {
-    case classicBars
-    case siriOrb
-    case waterLine
-    case minimalDots
-    case precisionWaveform
-    case quantumOrb
-    case minimalistRipple
-    case amberResonance
-    case pencilSketch
-    case zenIncense
+    case glass
+    case ink
+    case aurora
+    case mono
 
     var displayName: String {
         switch self {
-        case .classicBars: "柱狀顯示"
-        case .siriOrb: "Siri 光球"
-        case .waterLine: "流動波形"
-        case .minimalDots: "極簡圓點"
-        case .precisionWaveform: "精準頻譜"
-        case .quantumOrb: "量子光球"
-        case .minimalistRipple: "極簡聲波"
-        case .amberResonance: "木質暖香"
-        case .pencilSketch: "優雅素描"
-        case .zenIncense: "裊裊輕煙"
+        case .glass: "琉璃"
+        case .ink: "墨韻"
+        case .aurora: "極光"
+        case .mono: "羽量"
         }
     }
 }
@@ -69,7 +57,7 @@ struct ProductPreferences: Codable, Equatable, Sendable {
     var interactionSounds = true
     var muteOtherAudio = true
     var showDockIcon = true
-    var hudStyle: HUDStyle = .classicBars
+    var hudStyle: HUDStyle = .glass
     var liveCaptionsEnabled = true
     var subtitleStyle: SubtitleStyle = .bubble
 
@@ -93,7 +81,7 @@ struct ProductPreferences: Codable, Equatable, Sendable {
         interactionSounds = try values.decodeIfPresent(Bool.self, forKey: .interactionSounds) ?? true
         muteOtherAudio = try values.decodeIfPresent(Bool.self, forKey: .muteOtherAudio) ?? true
         showDockIcon = try values.decodeIfPresent(Bool.self, forKey: .showDockIcon) ?? true
-        hudStyle = try values.decodeIfPresent(HUDStyle.self, forKey: .hudStyle) ?? .classicBars
+        hudStyle = try values.decodeIfPresent(HUDStyle.self, forKey: .hudStyle) ?? .glass
         liveCaptionsEnabled = try values.decodeIfPresent(Bool.self, forKey: .liveCaptionsEnabled) ?? true
         subtitleStyle = try values.decodeIfPresent(SubtitleStyle.self, forKey: .subtitleStyle) ?? .bubble
     }

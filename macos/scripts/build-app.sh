@@ -69,14 +69,19 @@ done
 # password the person building may not even have. Login-keychain-only means
 # an unavailable/unfamiliar password never blocks or prompts a dev build.
 LOGIN_KEYCHAIN="$HOME/Library/Keychains/login.keychain-db"
+# NEXVOICE_SIGN_KEYCHAIN: opt-in override for machines whose login keychain is
+# locked/unusable (e.g. keychain password out of sync with login password).
+# Points identity lookup at a dedicated dev keychain instead; default behavior
+# (login keychain only) is unchanged when unset.
+SIGN_KEYCHAIN=${NEXVOICE_SIGN_KEYCHAIN:-$LOGIN_KEYCHAIN}
 
 SIGN_IDENTITY=${NEXVOICE_SIGN_IDENTITY:-}
 if [[ -z "$SIGN_IDENTITY" && "$BUILD_KIND" != "dev" ]]; then
-  SIGN_IDENTITY=$(security find-identity -v -p codesigning "$LOGIN_KEYCHAIN" 2>/dev/null \
+  SIGN_IDENTITY=$(security find-identity -v -p codesigning "$SIGN_KEYCHAIN" 2>/dev/null \
     | sed -n 's/.*"\(Developer ID Application:[^"]*\)".*/\1/p' \
     | head -1)
 fi
-if [[ -z "$SIGN_IDENTITY" ]] || ! security find-identity -v -p codesigning "$LOGIN_KEYCHAIN" 2>/dev/null | grep -qF "$SIGN_IDENTITY"; then
+if [[ -z "$SIGN_IDENTITY" ]] || ! security find-identity -v -p codesigning "$SIGN_KEYCHAIN" 2>/dev/null | grep -qF "$SIGN_IDENTITY"; then
   if [[ "$BUILD_KIND" == "dev" ]]; then
     # Prefer a real identity in the login keychain over ad-hoc: ad-hoc
     # (`--sign -`) pins TCC's designated requirement to the executable's
@@ -86,11 +91,11 @@ if [[ -z "$SIGN_IDENTITY" ]] || ! security find-identity -v -p codesigning "$LOG
     # identity is available in the login keychain) anchors the requirement
     # to the cert + bundle id instead, so it survives rebuilds. Contributors
     # with no cert in their login keychain fall through to ad-hoc.
-    SIGN_IDENTITY=$(security find-identity -v -p codesigning "$LOGIN_KEYCHAIN" 2>/dev/null \
+    SIGN_IDENTITY=$(security find-identity -v -p codesigning "$SIGN_KEYCHAIN" 2>/dev/null \
       | sed -n 's/.*"\(Developer ID Application:[^"]*\)".*/\1/p' \
       | head -1)
     if [[ -z "$SIGN_IDENTITY" ]]; then
-      SIGN_IDENTITY=$(security find-identity -v -p codesigning "$LOGIN_KEYCHAIN" 2>/dev/null \
+      SIGN_IDENTITY=$(security find-identity -v -p codesigning "$SIGN_KEYCHAIN" 2>/dev/null \
         | sed -n 's/.*"\([^"]*\)".*/\1/p' \
         | head -1)
     fi

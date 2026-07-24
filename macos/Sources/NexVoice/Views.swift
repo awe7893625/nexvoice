@@ -359,16 +359,60 @@ private struct HomePage: View {
                 .nvCard()
 
                 if !model.lastTranscript.isEmpty {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("上一筆")
-                            .font(.system(size: 13, weight: .bold))
-                            .foregroundStyle(NV.ink)
-                        Text(model.lastTranscript)
-                            .font(.system(size: 13))
-                            .foregroundStyle(NV.secondary)
-                            .lineLimit(4)
-                        Button("重貼") { model.repasteLast() }
+                    VStack(alignment: .leading, spacing: 14) {
+                        HStack {
+                            HStack(spacing: 8) {
+                                Image(systemName: "quote.bubble.fill")
+                                    .font(.system(size: 14, weight: .semibold))
+                                    .foregroundStyle(NV.blue)
+                                Text("即時轉錄結果")
+                                    .font(.system(size: 15, weight: .bold))
+                                    .foregroundStyle(NV.ink)
+                            }
+                            Spacer()
+                            Text("最新轉錄")
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundStyle(NV.blue)
+                                .padding(.horizontal, 9)
+                                .padding(.vertical, 4)
+                                .background(NV.selected, in: Capsule())
+                        }
+
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text(model.lastTranscript)
+                                .font(.system(size: 14, weight: .regular))
+                                .foregroundStyle(NV.ink)
+                                .lineSpacing(5)
+                                .textSelection(.enabled)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        .padding(14)
+                        .background(
+                            Color.black.opacity(0.025),
+                            in: RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                .stroke(NV.hairline, lineWidth: 1)
+                        )
+
+                        HStack(spacing: 10) {
+                            Button {
+                                model.repasteLast()
+                            } label: {
+                                Label("重新貼上 (⌥⌘V)", systemImage: "doc.on.clipboard")
+                            }
+                            .buttonStyle(NVPrimaryButton())
+
+                            Button {
+                                NSPasteboard.general.clearContents()
+                                NSPasteboard.general.setString(model.lastTranscript, forType: .string)
+                                model.notice = "已複製轉錄文字。"
+                            } label: {
+                                Label("複製文字", systemImage: "doc.on.doc")
+                            }
                             .buttonStyle(NVSecondaryButton())
+                        }
                     }
                     .nvCard()
                 }
@@ -799,119 +843,145 @@ private struct SettingsPage: View {
                     toggleRow(title: "在 Dock 顯示", detail: "顯示或隱藏 Dock 圖示", isOn: $model.productPreferences.showDockIcon)
                 }.nvCard()
 
-                VStack(alignment: .leading, spacing: 12) {
+                VStack(alignment: .leading, spacing: 16) {
                     HStack {
-                        VStack(alignment: .leading, spacing: 3) {
+                        VStack(alignment: .leading, spacing: 4) {
                             Text("語音 HUD 樣式")
-                                .font(.system(size: 14, weight: .bold)).foregroundStyle(NV.ink)
-                            Text("錄音時顯示在畫面下方的小型浮動控制器")
-                                .font(.system(size: 12)).foregroundStyle(NV.secondary)
+                                .font(.system(size: 15, weight: .bold))
+                                .foregroundStyle(NV.ink)
+                            Text("錄音時顯示在畫面下方的小型浮動控制器動畫與聲波型態")
+                                .font(.system(size: 12.5))
+                                .foregroundStyle(NV.secondary)
                         }
                         Spacer()
                         Toggle("即時字幕", isOn: $model.productPreferences.liveCaptionsEnabled)
                             .toggleStyle(.switch)
                     }
 
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 100, maximum: 132), spacing: 8)], spacing: 8) {
+                    LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 12), count: 3), spacing: 12) {
                         ForEach(HUDStyle.allCases, id: \.self) { style in
                             Button {
                                 model.productPreferences.hudStyle = style
                             } label: {
-                                VStack(spacing: 7) {
-                                    // Neutral stage stands in for "your screen"
-                                    // so white elements stay visible; the live
-                                    // HUD itself is frameless.
+                                VStack(spacing: 10) {
                                     HUDVisualization(
                                         style: style,
                                         levels: [0.12, 0.35, 0.7, 0.42, 0.9, 0.5, 0.22, 0.65, 0.38, 0.78, 0.3]
                                     )
-                                    .scaleEffect(0.72)
-                                    .frame(width: 100, height: 44)
+                                    .scaleEffect(0.78)
+                                    .frame(width: 110, height: 50)
                                     .frame(maxWidth: .infinity)
                                     .background(
                                         LinearGradient(
-                                            colors: [Color(white: 0.17), Color(white: 0.08)],
+                                            colors: [Color(red: 0.12, green: 0.13, blue: 0.17), Color(red: 0.08, green: 0.09, blue: 0.12)],
                                             startPoint: .top, endPoint: .bottom
                                         ),
-                                        in: RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                        in: RoundedRectangle(cornerRadius: 10, style: .continuous)
                                     )
-                                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                            .stroke(NV.hairline, lineWidth: 1)
+                                    )
+                                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                                    
                                     Text(style.displayName)
-                                        .font(.system(size: 10.5, weight: .semibold))
-                                        .foregroundStyle(NV.ink)
+                                        .font(.system(size: 12, weight: .semibold))
+                                        .foregroundStyle(model.productPreferences.hudStyle == style ? NV.blue : NV.ink)
                                         .lineLimit(1)
                                 }
                                 .frame(maxWidth: .infinity)
-                                .padding(8)
+                                .padding(12)
                                 .background(
-                                    model.productPreferences.hudStyle == style ? NV.selected : NV.bg,
-                                    in: RoundedRectangle(cornerRadius: 10)
+                                    model.productPreferences.hudStyle == style ? NV.selected : NV.card,
+                                    in: RoundedRectangle(cornerRadius: 12, style: .continuous)
                                 )
                                 .overlay {
-                                    RoundedRectangle(cornerRadius: 10)
-                                        .stroke(model.productPreferences.hudStyle == style ? NV.blue : NV.hairline)
+                                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                        .stroke(model.productPreferences.hudStyle == style ? NV.blue : NV.hairline, lineWidth: model.productPreferences.hudStyle == style ? 1.5 : 1)
                                 }
                             }
                             .buttonStyle(.plain)
                         }
                     }
+                    .padding(.top, 4)
+
                     Text(model.productPreferences.liveCaptionsEnabled
-                         ? "即時字幕已開啟；錄音中會顯示 partial 文字。"
-                         : "即時字幕已關閉；只在停止後執行最終 MLX 轉錄，速度與隱私最佳。")
-                        .font(.system(size: 11.5)).foregroundStyle(NV.secondary)
+                         ? "即時字幕已開啟：錄音中會在 HUD 上方自動同步顯示 partial 聽寫文字。"
+                         : "即時字幕已關閉：停止錄音後執行最終高精準度轉錄，資源佔用最省。")
+                        .font(.system(size: 12))
+                        .foregroundStyle(NV.secondary)
+                        .padding(.top, 2)
                 }
-                .padding(16)
-                .background(NV.card, in: RoundedRectangle(cornerRadius: NV.radius, style: .continuous))
-                .overlay(RoundedRectangle(cornerRadius: NV.radius).stroke(NV.hairline))
+                .nvCard()
 
-                VStack(alignment: .leading, spacing: 12) {
-                    Text("即時字幕樣式")
-                        .font(.system(size: 14, weight: .bold)).foregroundStyle(NV.ink)
-                    Text("錄音中顯示在 HUD 上方的字幕文字視覺風格")
-                        .font(.system(size: 12)).foregroundStyle(NV.secondary)
+                VStack(alignment: .leading, spacing: 16) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack(spacing: 8) {
+                            Image(systemName: "captions.bubble.fill")
+                                .font(.system(size: 16, weight: .bold))
+                                .foregroundStyle(NV.blue)
+                            Text("即時字幕顯示樣式 (Live Subtitles)")
+                                .font(.system(size: 15, weight: .bold))
+                                .foregroundStyle(NV.ink)
+                        }
+                        Text("錄音時懸浮在畫面中 HUD 控制器上方同步顯示的動態字幕視覺風格")
+                            .font(.system(size: 12.5))
+                            .foregroundStyle(NV.secondary)
+                    }
 
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 150, maximum: 190), spacing: 8)], spacing: 8) {
+                    LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: 3), spacing: 12) {
                         ForEach(SubtitleStyle.allCases, id: \.self) { style in
                             Button {
                                 model.productPreferences.subtitleStyle = style
                             } label: {
-                                VStack(spacing: 7) {
+                                VStack(alignment: .leading, spacing: 8) {
+                                    HStack {
+                                        Text(style.displayName)
+                                            .font(.system(size: 12.5, weight: .bold))
+                                            .foregroundStyle(model.productPreferences.subtitleStyle == style ? NV.blue : NV.ink)
+                                            .lineLimit(1)
+                                        Spacer(minLength: 2)
+                                        if model.productPreferences.subtitleStyle == style {
+                                            Image(systemName: "checkmark.circle.fill")
+                                                .font(.system(size: 11))
+                                                .foregroundStyle(NV.blue)
+                                        }
+                                    }
+                                    
                                     SubtitleStylePreview(style: style, text: "今天開會，明天再做。")
                                         .fixedSize()
-                                        .scaleEffect(0.62)
-                                        .frame(height: 40)
+                                        .scaleEffect(0.55)
+                                        .frame(height: 42)
                                         .frame(maxWidth: .infinity)
                                         .background(
                                             LinearGradient(
-                                                colors: [Color(white: 0.17), Color(white: 0.08)],
+                                                colors: [Color(red: 0.12, green: 0.13, blue: 0.17), Color(red: 0.08, green: 0.09, blue: 0.12)],
                                                 startPoint: .top, endPoint: .bottom
                                             ),
                                             in: RoundedRectangle(cornerRadius: 8, style: .continuous)
                                         )
+                                        .overlay(
+                                            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                                .stroke(NV.hairline, lineWidth: 1)
+                                        )
                                         .clipped()
-                                    Text(style.displayName)
-                                        .font(.system(size: 10.5, weight: .semibold))
-                                        .foregroundStyle(NV.ink)
-                                        .lineLimit(1)
                                 }
-                                .frame(maxWidth: .infinity)
-                                .padding(8)
+                                .padding(10)
                                 .background(
-                                    model.productPreferences.subtitleStyle == style ? NV.selected : NV.bg,
-                                    in: RoundedRectangle(cornerRadius: 10)
+                                    model.productPreferences.subtitleStyle == style ? NV.selected : NV.card,
+                                    in: RoundedRectangle(cornerRadius: 12, style: .continuous)
                                 )
                                 .overlay {
-                                    RoundedRectangle(cornerRadius: 10)
-                                        .stroke(model.productPreferences.subtitleStyle == style ? NV.blue : NV.hairline)
+                                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                        .stroke(model.productPreferences.subtitleStyle == style ? NV.blue : NV.hairline, lineWidth: model.productPreferences.subtitleStyle == style ? 1.5 : 1)
                                 }
                             }
                             .buttonStyle(.plain)
                         }
                     }
+                    .padding(.top, 4)
                 }
-                .padding(16)
-                .background(NV.card, in: RoundedRectangle(cornerRadius: NV.radius, style: .continuous))
-                .overlay(RoundedRectangle(cornerRadius: NV.radius).stroke(NV.hairline))
+                .nvCard()
 
                 VStack(alignment: .leading, spacing: 12) {
                     Text("本地 MLX 模型").font(.system(size: 14, weight: .semibold)).foregroundStyle(NV.ink)
@@ -1023,8 +1093,8 @@ private struct SettingsPage: View {
         detail: String,
         @ViewBuilder trailing: () -> T
     ) -> some View {
-        HStack(alignment: .center, spacing: 12) {
-            VStack(alignment: .leading, spacing: 3) {
+        HStack(alignment: .center, spacing: 14) {
+            VStack(alignment: .leading, spacing: 4) {
                 Text(title)
                     .font(.system(size: 13.5, weight: .semibold))
                     .foregroundStyle(NV.ink)
@@ -1035,7 +1105,7 @@ private struct SettingsPage: View {
             Spacer()
             trailing()
         }
-        .padding(.vertical, 12)
+        .padding(.vertical, 14)
     }
 
     @ViewBuilder
