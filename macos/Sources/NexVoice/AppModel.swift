@@ -35,6 +35,7 @@ final class AppModel: ObservableObject {
             ProductPreferencesStore.save(productPreferences, defaults)
             runtime.updateHUDPreferences(
                 style: productPreferences.hudStyle,
+                chrome: productPreferences.hudChrome,
                 liveCaptionsEnabled: productPreferences.liveCaptionsEnabled,
                 subtitleStyle: productPreferences.subtitleStyle
             )
@@ -140,6 +141,7 @@ final class AppModel: ObservableObject {
         runtime.updateHotkeyProfile(hotkeyProfile)
         runtime.updateHUDPreferences(
             style: productPreferences.hudStyle,
+            chrome: productPreferences.hudChrome,
             liveCaptionsEnabled: productPreferences.liveCaptionsEnabled,
             subtitleStyle: productPreferences.subtitleStyle
         )

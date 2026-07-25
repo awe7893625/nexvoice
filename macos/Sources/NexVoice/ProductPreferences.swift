@@ -42,6 +42,24 @@ enum HUDStyle: String, CaseIterable, Codable, Sendable {
     }
 }
 
+/// Chrome (frame treatment) for the compact HUD capsule, orthogonal to
+/// HUDStyle: any waveform can wear any frame.
+enum HUDChrome: String, CaseIterable, Codable, Sendable {
+    case borderless
+    case hairline
+    case glowEdge
+    case breathingRing
+
+    var displayName: String {
+        switch self {
+        case .borderless: "無邊框"
+        case .hairline: "髮絲細邊"
+        case .glowEdge: "流光邊"
+        case .breathingRing: "呼吸光環"
+        }
+    }
+}
+
 /// Visual treatment for the live-caption text itself (separate from HUDStyle,
 /// which only controls the small waveform/orb indicator). `.bubble` is the
 /// original single-capsule design and stays the default -- these are
@@ -74,13 +92,14 @@ struct ProductPreferences: Codable, Equatable, Sendable {
     var muteOtherAudio = true
     var showDockIcon = true
     var hudStyle: HUDStyle = .glass
+    var hudChrome: HUDChrome = .borderless
     var liveCaptionsEnabled = true
     var subtitleStyle: SubtitleStyle = .bubble
 
     private enum CodingKeys: String, CodingKey {
         case dictate, translate, ask, interfaceLanguage, translationTarget
         case interactionSounds, muteOtherAudio, showDockIcon
-        case hudStyle, liveCaptionsEnabled, subtitleStyle
+        case hudStyle, hudChrome, liveCaptionsEnabled, subtitleStyle
     }
 
     init() {}
@@ -98,6 +117,7 @@ struct ProductPreferences: Codable, Equatable, Sendable {
         muteOtherAudio = try values.decodeIfPresent(Bool.self, forKey: .muteOtherAudio) ?? true
         showDockIcon = try values.decodeIfPresent(Bool.self, forKey: .showDockIcon) ?? true
         hudStyle = try values.decodeIfPresent(HUDStyle.self, forKey: .hudStyle) ?? .glass
+        hudChrome = try values.decodeIfPresent(HUDChrome.self, forKey: .hudChrome) ?? .borderless
         liveCaptionsEnabled = try values.decodeIfPresent(Bool.self, forKey: .liveCaptionsEnabled) ?? true
         subtitleStyle = try values.decodeIfPresent(SubtitleStyle.self, forKey: .subtitleStyle) ?? .bubble
     }

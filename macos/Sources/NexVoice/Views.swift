@@ -916,6 +916,50 @@ private struct SettingsPage: View {
 
                 VStack(alignment: .leading, spacing: 16) {
                     VStack(alignment: .leading, spacing: 4) {
+                        Text("HUD 外框")
+                            .font(.system(size: 15, weight: .bold))
+                            .foregroundStyle(NV.ink)
+                        Text("套在膠囊背景上的外框樣式，與上方波形樣式可自由搭配")
+                            .font(.system(size: 12.5))
+                            .foregroundStyle(NV.secondary)
+                    }
+
+                    LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 12), count: 3), spacing: 12) {
+                        ForEach(HUDChrome.allCases, id: \.self) { chrome in
+                            Button {
+                                model.productPreferences.hudChrome = chrome
+                            } label: {
+                                VStack(spacing: 10) {
+                                    HUDCapsuleChrome(chrome: chrome)
+                                        .frame(width: 80, height: 36)
+                                        .frame(maxWidth: .infinity)
+                                        .frame(height: 50)
+
+                                    Text(chrome.displayName)
+                                        .font(.system(size: 12, weight: .semibold))
+                                        .foregroundStyle(model.productPreferences.hudChrome == chrome ? NV.blue : NV.ink)
+                                        .lineLimit(1)
+                                }
+                                .frame(maxWidth: .infinity)
+                                .padding(12)
+                                .background(
+                                    model.productPreferences.hudChrome == chrome ? NV.selected : NV.card,
+                                    in: RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                )
+                                .overlay {
+                                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                        .stroke(model.productPreferences.hudChrome == chrome ? NV.blue : NV.hairline, lineWidth: model.productPreferences.hudChrome == chrome ? 1.5 : 1)
+                                }
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(.top, 4)
+                }
+                .nvCard()
+
+                VStack(alignment: .leading, spacing: 16) {
+                    VStack(alignment: .leading, spacing: 4) {
                         HStack(spacing: 8) {
                             Image(systemName: "captions.bubble.fill")
                                 .font(.system(size: 16, weight: .bold))

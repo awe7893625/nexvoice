@@ -11,8 +11,9 @@ final class CompactRecorderHUD {
     private var liveCaptionsEnabled = true
     var meterProvider: (() -> Double)?
 
-    func configure(style: HUDStyle, liveCaptionsEnabled: Bool, subtitleStyle: SubtitleStyle) {
+    func configure(style: HUDStyle, chrome: HUDChrome, liveCaptionsEnabled: Bool, subtitleStyle: SubtitleStyle) {
         model.style = style
+        model.chrome = chrome
         model.subtitleStyle = subtitleStyle
         self.liveCaptionsEnabled = liveCaptionsEnabled
         if !liveCaptionsEnabled {
@@ -143,6 +144,7 @@ private final class RecorderHUDModel: ObservableObject {
     @Published var statusText = "Thinking…"
     @Published var partialText = ""
     @Published var style: HUDStyle = .glass
+    @Published var chrome: HUDChrome = .borderless
     @Published var subtitleStyle: SubtitleStyle = .bubble
 }
 
@@ -173,22 +175,78 @@ private struct CompactRecorderView: View {
         .frame(width: 64, height: 24)
         .padding(.horizontal, 8)
         .frame(width: 80, height: 36)
-        .background(
-            // Borderless obsidian: depth comes from the vertical sheen and a
-            // soft drop shadow instead of a stroked outline.
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(
-                    LinearGradient(
-                        colors: [
-                            Color(red: 0.10, green: 0.10, blue: 0.115),
-                            Color(red: 0.045, green: 0.045, blue: 0.055),
-                        ],
-                        startPoint: .top,
-                        endPoint: .bottom
-                    )
+        .background(HUDCapsuleChrome(chrome: model.chrome))
+    }
+}
+
+/// Obsidian base shared by all chromes; each case layers its own frame on top.
+struct HUDCapsuleChrome: View {
+    let chrome: HUDChrome
+
+    private var base: some View {
+        RoundedRectangle(cornerRadius: 18, style: .continuous)
+            .fill(
+                LinearGradient(
+                    colors: [
+                        Color(red: 0.10, green: 0.10, blue: 0.115),
+                        Color(red: 0.045, green: 0.045, blue: 0.055),
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
                 )
-                .shadow(color: .black.opacity(0.45), radius: 14, y: 6)
-        )
+            )
+            .shadow(color: .black.opacity(0.45), radius: 14, y: 6)
+    }
+
+    var body: some View {
+        switch chrome {
+        case .borderless:
+            base
+        case .hairline:
+            base.overlay {
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .strokeBorder(
+                        LinearGradient(
+                            colors: [Color.white.opacity(0.22), Color.white.opacity(0.06)],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        ),
+                        lineWidth: 0.75
+                    )
+            }
+        case .glowEdge:
+            base.overlay {
+                TimelineView(.animation(minimumInterval: 0.05)) { context in
+                    let t = context.date.timeIntervalSinceReferenceDate
+                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        .strokeBorder(
+                            AngularGradient(
+                                colors: [
+                                    Color(red: 0.494, green: 0.91, blue: 0.839),
+                                    Color(red: 0.592, green: 0.541, blue: 1.0),
+                                    Color(red: 1.0, green: 0.549, blue: 0.835),
+                                    Color(red: 0.494, green: 0.91, blue: 0.839),
+                                ],
+                                center: .center,
+                                angle: .degrees(t * 40)
+                            ),
+                            lineWidth: 1.2
+                        )
+                        .opacity(0.85)
+                        .shadow(color: Color(red: 0.592, green: 0.541, blue: 1.0).opacity(0.35), radius: 6)
+                }
+            }
+        case .breathingRing:
+            base.overlay {
+                TimelineView(.animation(minimumInterval: 0.05)) { context in
+                    let t = context.date.timeIntervalSinceReferenceDate
+                    let breathe = 0.5 + 0.5 * sin(t * 1.6)
+                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        .strokeBorder(Color.white.opacity(0.10 + 0.22 * breathe), lineWidth: 1)
+                        .shadow(color: .white.opacity(0.12 * breathe), radius: 5)
+                }
+            }
+        }
     }
 }
 

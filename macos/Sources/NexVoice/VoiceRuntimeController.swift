@@ -95,9 +95,9 @@ final class VoiceRuntimeController {
         lastSuccessfulText = text.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    func updateHUDPreferences(style: HUDStyle, liveCaptionsEnabled: Bool, subtitleStyle: SubtitleStyle) {
+    func updateHUDPreferences(style: HUDStyle, chrome: HUDChrome, liveCaptionsEnabled: Bool, subtitleStyle: SubtitleStyle) {
         self.liveCaptionsEnabled = liveCaptionsEnabled
-        hud.configure(style: style, liveCaptionsEnabled: liveCaptionsEnabled, subtitleStyle: subtitleStyle)
+        hud.configure(style: style, chrome: chrome, liveCaptionsEnabled: liveCaptionsEnabled, subtitleStyle: subtitleStyle)
         if !liveCaptionsEnabled {
             liveTranscriptTask?.cancel()
             liveTranscriptTask = nil
