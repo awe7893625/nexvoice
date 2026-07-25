@@ -465,6 +465,12 @@ struct HUDVisualization: View {
                 Helix(levels: levels)
             case .mercury:
                 Mercury(levels: levels)
+            case .ekg:
+                EKG(levels: levels)
+            case .meteor:
+                MeteorShower(levels: levels)
+            case .plasma:
+                Plasma(levels: levels)
             }
         }
         .frame(width: 64, height: 22)
@@ -1476,6 +1482,324 @@ private struct Mercury: View {
                         startRadius: 0,
                         endRadius: orbR
                     )
+                )
+            }
+        }
+    }
+}
+
+/// "心電" (EKG) -- ported from the NexVoice HUD Lab mockup's 心電 variant: a
+/// faint breathing baseline sine with a bright Gaussian-enveloped pulse
+/// packet that scans left-to-right, a fading trailing streak behind the
+/// pulse head, and a bright bloom dot riding at the head -- mirrors the
+/// halo+gradient double-stroke bloom convention used by CometTrail/Helix/Mercury.
+private struct EKG: View {
+    let levels: [Double]
+
+    var body: some View {
+        TimelineView(.animation(minimumInterval: 0.03)) { context in
+            let t = context.date.timeIntervalSinceReferenceDate
+            let voiceLevel = levels.last ?? 0
+            let (power, bloom) = nexVoiceHUDLabPower(t: t, level: voiceLevel)
+
+            Canvas { canvas, size in
+                let w = Double(size.width)
+                let h = Double(size.height)
+                let cy = h / 2
+                let amp = 1.6 + power * 3.6
+                let rate = 0.85 + power * 0.35
+                let scanX = (t * 24 * rate).truncatingRemainder(dividingBy: w)
+                let trail = 9 + power * 4
+
+                func baseline(_ x: Double) -> Double {
+                    cy + sin(x * 0.16 + t * 1.4 * rate) * 0.42
+                }
+                func waveform(_ x: Double) -> Double {
+                    let d = x - scanX
+                    let envelope = exp(-(d * d) / (7 + power * 7))
+                    let spike = envelope * (
+                        sin(d * 0.9) * amp * 0.32 +
+                        sin(d * 1.7) * amp * 0.58 +
+                        sin(d * 0.34) * amp * 0.2
+                    )
+                    return baseline(x) + spike
+                }
+
+                var basePoints: [CGPoint] = []
+                var x = 0.0
+                while x <= w { basePoints.append(CGPoint(x: x, y: baseline(x))); x += 1 }
+                var basePath = Path()
+                basePath.addLines(basePoints)
+                canvas.stroke(
+                    basePath,
+                    with: .color(Color(red: 0.24, green: 0.80, blue: 1.0).opacity(0.20)),
+                    style: StrokeStyle(lineWidth: 3.6 * bloom, lineCap: .round, lineJoin: .round)
+                )
+
+                var points: [CGPoint] = []
+                x = 0.0
+                while x <= w { points.append(CGPoint(x: x, y: waveform(x))); x += 0.6 }
+                var path = Path()
+                path.addLines(points)
+                canvas.stroke(
+                    path,
+                    with: .linearGradient(
+                        Gradient(colors: [
+                            Color(red: 0.31, green: 0.43, blue: 1.0).opacity(0.5),
+                            Color(red: 0.26, green: 0.84, blue: 1.0).opacity(0.94),
+                            Color(red: 0.88, green: 1.0, blue: 1.0).opacity(0.98),
+                            Color(red: 0.50, green: 0.43, blue: 1.0).opacity(0.55),
+                        ]),
+                        startPoint: CGPoint(x: 0, y: cy),
+                        endPoint: CGPoint(x: w, y: cy)
+                    ),
+                    style: StrokeStyle(lineWidth: 1.3 + power * 0.5, lineCap: .round, lineJoin: .round)
+                )
+
+                var trailPoints: [CGPoint] = []
+                var tx = max(0, scanX - trail)
+                while tx <= scanX { trailPoints.append(CGPoint(x: tx, y: waveform(tx))); tx += 0.5 }
+                var trailPath = Path()
+                trailPath.addLines(trailPoints)
+                canvas.stroke(
+                    trailPath,
+                    with: .linearGradient(
+                        Gradient(colors: [
+                            Color(red: 0.26, green: 0.84, blue: 1.0).opacity(0),
+                            Color(red: 0.90, green: 1.0, blue: 1.0).opacity(0.9),
+                        ]),
+                        startPoint: CGPoint(x: scanX - trail, y: cy),
+                        endPoint: CGPoint(x: scanX, y: cy)
+                    ),
+                    style: StrokeStyle(lineWidth: 1.9 + power * 0.4, lineCap: .round, lineJoin: .round)
+                )
+
+                let hy = waveform(scanX)
+                let core = 1.6 + power * 0.7
+                canvas.fill(
+                    Path(ellipseIn: CGRect(x: scanX - core * 2, y: hy - core * 2, width: core * 4, height: core * 4)),
+                    with: .radialGradient(
+                        Gradient(colors: [
+                            .white,
+                            Color(red: 0.91, green: 1.0, blue: 1.0),
+                            Color(red: 0.42, green: 0.84, blue: 1.0).opacity(0),
+                        ]),
+                        center: CGPoint(x: scanX - 0.4, y: hy - 0.4),
+                        startRadius: 0,
+                        endRadius: core * 2
+                    )
+                )
+                canvas.fill(
+                    Path(ellipseIn: CGRect(x: scanX - core * 0.5, y: hy - core * 0.5, width: core, height: core)),
+                    with: .color(.white.opacity(0.97))
+                )
+            }
+        }
+    }
+}
+
+/// "流星群" (Meteor Shower) -- ported from the NexVoice HUD Lab mockup's
+/// 流星群 variant: a shared undulating track band with three meteors
+/// travelling along it in a fixed relay (evenly spaced, deterministic
+/// per-meteor phase offsets -- no Double.random), each dragging a short
+/// segmented fading tail and a bright bloom head. Segment count reduced
+/// from the mockup's 8 to 6 (perf, matches CometTrail's own 9->6 reduction)
+/// with larger radius/alpha to keep the density feel.
+private struct MeteorShower: View {
+    let levels: [Double]
+    private static let count = 3
+
+    var body: some View {
+        TimelineView(.animation(minimumInterval: 0.03)) { context in
+            let t = context.date.timeIntervalSinceReferenceDate
+            let voiceLevel = levels.last ?? 0
+            let (power, bloom) = nexVoiceHUDLabPower(t: t, level: voiceLevel)
+
+            Canvas { canvas, size in
+                let w = Double(size.width)
+                let h = Double(size.height)
+                let cy = h / 2
+                let amp = h * (0.10 + power * 0.16)
+                let rate = 0.85 + power * 0.35
+
+                func trackY(_ x: Double, phase: Double = 0) -> Double {
+                    cy + sin(x * 0.20 + t * 1.6 * rate + phase) * amp
+                        + sin(x * 0.07 - t * 0.8 * rate) * amp * 0.22
+                }
+
+                var bandPoints: [CGPoint] = []
+                var x = 0.0
+                while x <= w { bandPoints.append(CGPoint(x: x, y: trackY(x))); x += 1 }
+                var band = Path()
+                band.addLines(bandPoints)
+
+                canvas.stroke(
+                    band,
+                    with: .color(Color(red: 0.33, green: 0.84, blue: 1.0).opacity(0.18)),
+                    style: StrokeStyle(lineWidth: 4.4 * bloom, lineCap: .round, lineJoin: .round)
+                )
+                canvas.stroke(
+                    band,
+                    with: .linearGradient(
+                        Gradient(colors: [
+                            Color(red: 0.36, green: 0.40, blue: 1.0).opacity(0.42),
+                            Color(red: 0.34, green: 0.90, blue: 1.0).opacity(0.9),
+                            Color(red: 0.55, green: 0.47, blue: 1.0).opacity(0.38),
+                        ]),
+                        startPoint: CGPoint(x: 0, y: cy),
+                        endPoint: CGPoint(x: w, y: cy)
+                    ),
+                    style: StrokeStyle(lineWidth: 1.0, lineCap: .round, lineJoin: .round)
+                )
+
+                for i in 0..<Self.count {
+                    let spacing = w / Double(Self.count)
+                    let progress = (t * (15 + power * 20) * rate + Double(i) * spacing)
+                        .truncatingRemainder(dividingBy: w)
+                    let hx = progress
+                    let hy = trackY(hx, phase: Double(i) * 0.12)
+                    let tailLength = 9.0 + power * 6
+                    let segments = 6
+
+                    for j in stride(from: segments, through: 1, by: -1) {
+                        let d = Double(j) * (tailLength / Double(segments))
+                        let tx = max(0, min(w, hx - d))
+                        let ty = trackY(tx, phase: Double(i) * 0.12)
+                        let a = pow(1 - Double(j) / Double(segments + 1), 1.8)
+                        let r = 0.45 + Double(segments - j) * 0.1
+                        let color = i % 2 == 0
+                            ? Color(red: 0.38, green: 0.89, blue: 1.0)
+                            : Color(red: 0.55, green: 0.47, blue: 1.0)
+                        canvas.fill(
+                            Path(ellipseIn: CGRect(x: tx - r, y: ty - r, width: r * 2, height: r * 2)),
+                            with: .color(color.opacity(a * 0.78))
+                        )
+                    }
+
+                    let radius = 1.3 + power * 0.7
+                    let headColor = i % 2 == 0
+                        ? Color(red: 0.47, green: 0.93, blue: 1.0)
+                        : Color(red: 0.66, green: 0.58, blue: 1.0)
+                    canvas.fill(
+                        Path(ellipseIn: CGRect(x: hx - radius * 2, y: hy - radius * 2, width: radius * 4, height: radius * 4)),
+                        with: .radialGradient(
+                            Gradient(colors: [.white, Color(red: 0.93, green: 1.0, blue: 1.0), headColor.opacity(0)]),
+                            center: CGPoint(x: hx - 0.4, y: hy - 0.4),
+                            startRadius: 0,
+                            endRadius: radius * 2
+                        )
+                    )
+                    canvas.fill(
+                        Path(ellipseIn: CGRect(x: hx - radius * 0.5, y: hy - radius * 0.5, width: radius, height: radius)),
+                        with: .color(.white.opacity(0.95))
+                    )
+                }
+            }
+        }
+    }
+}
+
+/// "電漿" (Plasma) -- ported from the NexVoice HUD Lab mockup's 電漿
+/// variant: a dual-harmonic arcing wave (envelope-tapered to flat at both
+/// ends) with a fainter secondary counter-phased arc riding underneath, a
+/// bright bloom node at each end, and a small node marker sweeping back and
+/// forth along the arc.
+private struct Plasma: View {
+    let levels: [Double]
+
+    var body: some View {
+        TimelineView(.animation(minimumInterval: 0.03)) { context in
+            let t = context.date.timeIntervalSinceReferenceDate
+            let voiceLevel = levels.last ?? 0
+            let (power, bloom) = nexVoiceHUDLabPower(t: t, level: voiceLevel)
+
+            Canvas { canvas, size in
+                let w = Double(size.width)
+                let h = Double(size.height)
+                let cy = h / 2
+                let amp = h * (0.11 + power * 0.20)
+                let rate = 0.85 + power * 0.35
+                let phase = t * 2.5 * rate
+                let thickness = 1.1 + power * 1.3
+
+                func arcY(_ x: Double, offset: Double = 0, flip: Double = 1) -> Double {
+                    let n = x / w
+                    let envelope = sin(n * .pi)
+                    return cy
+                        + sin(x * 0.29 + phase + offset) * amp * envelope * flip
+                        + sin(x * 0.60 - phase * 1.2 + offset) * amp * 0.3 * envelope
+                }
+
+                var hazePoints: [CGPoint] = []
+                var x = 0.0
+                while x <= w { hazePoints.append(CGPoint(x: x, y: arcY(x))); x += 0.7 }
+                var haze = Path()
+                haze.addLines(hazePoints)
+                canvas.stroke(
+                    haze,
+                    with: .color(Color(red: 0.34, green: 0.81, blue: 1.0).opacity(0.16)),
+                    style: StrokeStyle(lineWidth: (5.2 + power * 1.4) * bloom, lineCap: .round, lineJoin: .round)
+                )
+
+                var outerPoints: [CGPoint] = []
+                x = 0.0
+                while x <= w { outerPoints.append(CGPoint(x: x, y: arcY(x, offset: 0.23, flip: 0.82))); x += 0.55 }
+                var outer = Path()
+                outer.addLines(outerPoints)
+                canvas.stroke(
+                    outer,
+                    with: .color(Color(red: 0.62, green: 0.45, blue: 1.0).opacity(0.4)),
+                    style: StrokeStyle(lineWidth: 0.8 + power * 0.6, lineCap: .round, lineJoin: .round)
+                )
+
+                var corePoints: [CGPoint] = []
+                x = 0.0
+                while x <= w { corePoints.append(CGPoint(x: x, y: arcY(x))); x += 0.5 }
+                var core = Path()
+                core.addLines(corePoints)
+                canvas.stroke(
+                    core,
+                    with: .linearGradient(
+                        Gradient(colors: [
+                            Color(red: 0.66, green: 0.98, blue: 1.0).opacity(0.95),
+                            Color(red: 0.34, green: 0.81, blue: 1.0).opacity(0.96),
+                            Color(red: 1.0, green: 1.0, blue: 1.0).opacity(1),
+                            Color(red: 0.56, green: 0.49, blue: 1.0).opacity(0.98),
+                            Color(red: 0.79, green: 0.98, blue: 1.0).opacity(0.95),
+                        ]),
+                        startPoint: CGPoint(x: 0, y: cy),
+                        endPoint: CGPoint(x: w, y: cy)
+                    ),
+                    style: StrokeStyle(lineWidth: thickness, lineCap: .round, lineJoin: .round)
+                )
+
+                let pulse = 0.78 + 0.22 * sin(t * 4.4 * rate)
+                let endpoints: [(x: Double, color: Color)] = [
+                    (0, Color(red: 0.66, green: 0.98, blue: 1.0)),
+                    (w, Color(red: 0.71, green: 0.60, blue: 1.0)),
+                ]
+                canvas.opacity = pulse
+                for endpoint in endpoints {
+                    let py = arcY(endpoint.x)
+                    let radius = 1.5 + power * 0.9
+                    canvas.fill(
+                        Path(ellipseIn: CGRect(x: endpoint.x - radius * 2.4, y: py - radius * 2.4, width: radius * 4.8, height: radius * 4.8)),
+                        with: .radialGradient(
+                            Gradient(colors: [.white, endpoint.color, endpoint.color.opacity(0)]),
+                            center: CGPoint(x: endpoint.x, y: py - 0.4),
+                            startRadius: 0,
+                            endRadius: radius * 2.4
+                        )
+                    )
+                }
+                canvas.opacity = 1
+
+                let nodeX = w * (0.5 + 0.42 * sin(t * 1.8 * rate))
+                let nodeY = arcY(nodeX)
+                let nodeRadius = 0.9 + power * 0.5
+                canvas.fill(
+                    Path(ellipseIn: CGRect(x: nodeX - nodeRadius, y: nodeY - nodeRadius, width: nodeRadius * 2, height: nodeRadius * 2)),
+                    with: .color(.white)
                 )
             }
         }
