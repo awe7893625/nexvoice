@@ -469,6 +469,19 @@ enum LocalTranscriptPostprocessor {
             // left alone, so "Is this ok?" keeps its halfwidth form.
             .replacingOccurrences(of: "([\\x{3400}-\\x{9FFF}])\\?", with: "$1？", options: .regularExpression)
             .replacingOccurrences(of: "([\\x{3400}-\\x{9FFF}])!", with: "$1！", options: .regularExpression)
+            // Halfwidth comma/period squeezed between two CJK characters is the
+            // same decoder artifact; "1,000" and "v1.2" keep their ASCII marks
+            // because both neighbors must be CJK.
+            .replacingOccurrences(
+                of: "([\\x{3400}-\\x{9FFF}]),(?=[\\x{3400}-\\x{9FFF}])",
+                with: "$1，",
+                options: .regularExpression
+            )
+            .replacingOccurrences(
+                of: "([\\x{3400}-\\x{9FFF}])\\.(?=[\\x{3400}-\\x{9FFF}])",
+                with: "$1。",
+                options: .regularExpression
+            )
     }
 
     private static func normalizeWhitespace(_ text: String) -> String {
