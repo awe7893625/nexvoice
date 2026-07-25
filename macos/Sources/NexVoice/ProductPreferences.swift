@@ -31,6 +31,12 @@ enum HUDStyle: String, CaseIterable, Codable, Sendable {
     case mercury
     case plasma
     case eclipse
+    case smoke
+    case horizontalSmoke
+    case oceanSwell
+    case silkStream
+    case auroraMist
+    case inkBloom
 
     var displayName: String {
         switch self {
@@ -49,6 +55,12 @@ enum HUDStyle: String, CaseIterable, Codable, Sendable {
         case .mercury: "水銀"
         case .plasma: "電漿"
         case .eclipse: "日蝕"
+        case .smoke: "煙霧"
+        case .horizontalSmoke: "橫煙"
+        case .oceanSwell: "海浪"
+        case .silkStream: "絲綢氣流"
+        case .auroraMist: "極光霧"
+        case .inkBloom: "墨滴擴散"
         }
     }
 }
