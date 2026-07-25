@@ -517,7 +517,7 @@ private struct InkStroke: View {
                                 path.move(to: prevPoint)
                                 path.addLine(to: CGPoint(x: x, y: y))
                             },
-                            with: .color(Color(red: 0.133, green: 0.122, blue: 0.102).opacity(0.92)),
+                            with: .color(Color(red: 0.96, green: 0.93, blue: 0.86).opacity(0.95)),
                             style: StrokeStyle(lineWidth: thickness, lineCap: .round)
                         )
                     }
@@ -537,7 +537,7 @@ private struct InkStroke: View {
                                 path.addLine(to: CGPoint(x: x, y: y))
                             }
                         },
-                        with: .color(Color(red: 0.133, green: 0.122, blue: 0.102).opacity(0.18)),
+                        with: .color(Color(red: 0.96, green: 0.93, blue: 0.86).opacity(0.28)),
                         style: StrokeStyle(lineWidth: 1, lineCap: .round)
                     )
                 }
