@@ -21,3 +21,6 @@ config.json
 *.log
 macos/.build/
 dist/
+
+# built by macos/scripts/shot-window.sh
+macos/scripts/window-id
