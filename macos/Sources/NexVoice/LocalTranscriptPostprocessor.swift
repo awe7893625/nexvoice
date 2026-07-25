@@ -147,8 +147,54 @@ enum LocalTranscriptPostprocessor {
     private static func applyProseCleanup(_ text: String, vocabulary: [VocabEntry]) -> String {
         var result = applyVocabulary(text, vocabulary: vocabulary)
         result = replaceSpokenPunctuation(result)
+        result = demoteClausalDunhao(result)
         result = normalizePunctuationClusters(result)
         return normalizeWhitespace(result)
+    }
+
+    /// 頓號 is only correct between short parallel items（「蘋果、香蕉」）。The
+    /// MLX decoder also drops it between full clauses; when either side of a
+    /// 、 is a long span (7+ units, ASCII runs counted as one unit), that 、
+    /// is a mis-punctuated clause break and reads better as 逗號.
+    private static func demoteClausalDunhao(_ text: String) -> String {
+        guard text.contains("、") else { return text }
+        let punctuation = Set("，。！？；：、,.!?;:…\n")
+        let characters = Array(text)
+
+        func units(in range: Range<Int>) -> Int {
+            var count = 0
+            var insideASCIIRun = false
+            for index in range {
+                let character = characters[index]
+                if character.isWhitespace {
+                    insideASCIIRun = false
+                } else if character.unicodeScalars.allSatisfy(\.isASCII) {
+                    if !insideASCIIRun { count += 1 }
+                    insideASCIIRun = true
+                } else {
+                    insideASCIIRun = false
+                    count += 1
+                }
+            }
+            return count
+        }
+
+        var result = ""
+        result.reserveCapacity(characters.count)
+        for (index, character) in characters.enumerated() {
+            guard character == "、" else {
+                result.append(character)
+                continue
+            }
+            var left = index - 1
+            while left >= 0, !punctuation.contains(characters[left]) { left -= 1 }
+            var right = index + 1
+            while right < characters.count, !punctuation.contains(characters[right]) { right += 1 }
+            let leftUnits = units(in: (left + 1)..<index)
+            let rightUnits = units(in: (index + 1)..<right)
+            result.append(leftUnits >= 7 || rightUnits >= 7 ? "，" : "、")
+        }
+        return result
     }
 
     // MARK: - URL / email / code span protection (P0-B)

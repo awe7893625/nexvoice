@@ -56,8 +56,38 @@ class RuntimeContractTests(unittest.TestCase):
         terms = [f"專有名詞{i}" for i in range(64)]
         prompt = runtime.build_initial_prompt(terms)
         self.assertIn("繁體中文", prompt)
-        self.assertIn("逗號、句號、問號", prompt)
         self.assertLessEqual(len(prompt.encode("utf-8")), runtime.MAX_PROMPT_BYTES)
+
+    def test_prompt_ends_with_prose_style_tail_not_glossary(self):
+        # The decoder mimics the tail of the prompt; the 、-separated glossary
+        # must sit up front and the prompt must end in natural punctuation
+        # style, otherwise dictation comes back as 頓號 lists.
+        prompt = runtime.build_initial_prompt(["NexVoice", "MyTerm"])
+        self.assertTrue(prompt.endswith(runtime.STYLE_TAIL))
+        self.assertLess(prompt.find("、"), prompt.find("以下是一段"))
+        self.assertNotIn("、", runtime.STYLE_TAIL)
+
+    def test_join_segments_closes_audible_pauses(self):
+        segments = [
+            {"text": "第一段話還沒說完", "start": 0.0, "end": 2.0},
+            {"text": "短暫停頓後接著說", "start": 2.8, "end": 4.5},
+            {"text": "長停頓代表句子結束", "start": 6.5, "end": 8.0},
+        ]
+        self.assertEqual(
+            runtime.join_segments_with_punctuation(segments),
+            "第一段話還沒說完，短暫停頓後接著說。長停頓代表句子結束",
+        )
+
+    def test_join_segments_respects_existing_punctuation_and_ascii(self):
+        segments = [
+            {"text": "這句已經有標點了。", "start": 0.0, "end": 2.0},
+            {"text": " see you tomorrow", "start": 3.0, "end": 4.0},
+            {"text": " thanks a lot", "start": 4.8, "end": 5.6},
+        ]
+        self.assertEqual(
+            runtime.join_segments_with_punctuation(segments),
+            "這句已經有標點了。 see you tomorrow, thanks a lot",
+        )
 
     def test_partial_prompt_uses_bounded_dictionary_subset(self):
         terms = [f"Term{i}" for i in range(30)]

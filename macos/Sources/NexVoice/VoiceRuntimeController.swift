@@ -394,10 +394,21 @@ final class VoiceRuntimeController {
     }
 
     private func finishRecordingNow() {
-        guard state == .recording,
-              let session = currentSession,
-              let recording = recorder.stop()
-        else { return }
+        guard state == .recording, let session = currentSession else { return }
+        guard let recording = recorder.stop() else {
+            // A recorder that produced nothing must not leave the session
+            // stuck in .recording with the HUD on screen forever.
+            DiagnosticLog.log("finishRecordingNow: recorder.stop() returned nil, resetting session")
+            maxDurationTask?.cancel()
+            maxDurationTask = nil
+            liveTranscriptTask?.cancel()
+            liveTranscriptTask = nil
+            currentSession = nil
+            activeVocabulary = []
+            hud.hide()
+            state = .failed("錄音檔無法讀取")
+            return
+        }
         maxDurationTask?.cancel()
         maxDurationTask = nil
         liveTranscriptTask?.cancel()
@@ -429,7 +440,14 @@ final class VoiceRuntimeController {
         pipelineTask?.cancel()
         pipelineTask = Task { [weak self] in
             guard let self else { return }
-            defer { try? FileManager.default.removeItem(at: fileURL) }
+            var preserveRecording = false
+            defer {
+                if preserveRecording {
+                    Self.preserveFailedRecording(at: fileURL)
+                } else {
+                    try? FileManager.default.removeItem(at: fileURL)
+                }
+            }
             do {
                 let prefs = currentPreferences()
                 let preferred = routing.choose(prefs.snapshot)
@@ -555,10 +573,14 @@ final class VoiceRuntimeController {
                 hud.hide()
             } catch {
                 guard currentSession == session else { return }
+                // The recording is the only copy of what the user said; a
+                // failed pipeline must never destroy it.
+                preserveRecording = true
+                DiagnosticLog.log("pipeline FAILED session=\(session.uuidString.prefix(8)): \(error.localizedDescription)")
                 currentSession = nil
                 activeVocabulary = []
                 hud.hide()
-                state = .failed(error.localizedDescription)
+                state = .failed("\(error.localizedDescription)（錄音已保留）")
             }
         }
     }
@@ -645,11 +667,31 @@ final class VoiceRuntimeController {
         case .localMLX:
             state = .transcribing(.localMLX)
             do {
-                return try await api.transcribeLocal(
-                    fileURL: fileURL,
-                    sessionID: session,
-                    vocabulary: vocabulary
-                )
+                do {
+                    return try await api.transcribeLocal(
+                        fileURL: fileURL,
+                        sessionID: session,
+                        vocabulary: vocabulary
+                    )
+                } catch let error where Self.isTransientLocalError(error) {
+                    // One bounded retry: a 409 (live-caption pass still holding
+                    // the model) or a dropped/timed-out connection is transient;
+                    // giving up immediately throws the whole recording away.
+                    // A refused connection means the helper died and the 5s
+                    // supervisor loop is respawning it -- wait long enough for
+                    // that instead of retrying into the same dead socket.
+                    let connectionDown = (error as? URLError).map {
+                        [.cannotConnectToHost, .cannotFindHost, .networkConnectionLost].contains($0.code)
+                    } ?? false
+                    DiagnosticLog.log("transcribe local transient error, retrying once: \(error.localizedDescription)")
+                    try await Task.sleep(for: connectionDown ? .seconds(6) : .milliseconds(800))
+                    try ensureCurrent(session)
+                    return try await api.transcribeLocal(
+                        fileURL: fileURL,
+                        sessionID: session,
+                        vocabulary: vocabulary
+                    )
+                }
             } catch {
                 // Re-read capability immediately before uploading. Settings may
                 // have changed while the local helper was timing out.
@@ -657,6 +699,7 @@ final class VoiceRuntimeController {
                 if privacyMode || !allowCloudFallback || !live.allowsCloudSTT || live.privacyMode {
                     throw error
                 }
+                DiagnosticLog.log("transcribe local failed, falling back to Groq: \(error.localizedDescription)")
                 state = .transcribing(.groqWhisper)
                 return try await api.transcribeGroq(fileURL: fileURL)
             }
@@ -669,6 +712,43 @@ final class VoiceRuntimeController {
         case .unavailable:
             throw VoiceAPIError.serviceUnavailable("沒有可用的轉錄路由")
         }
+    }
+
+    /// Failed sessions keep their WAV in Application Support so a timeout or
+    /// runtime crash never silently destroys what the user dictated. Bounded
+    /// to the newest 10 recordings.
+    private static func preserveFailedRecording(at url: URL) {
+        let manager = FileManager.default
+        guard manager.fileExists(atPath: url.path),
+              let support = manager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+        else { return }
+        let recovery = support.appendingPathComponent("NexVoice/recovery", isDirectory: true)
+        do {
+            try manager.createDirectory(at: recovery, withIntermediateDirectories: true)
+            let stamp = ISO8601DateFormatter().string(from: Date())
+                .replacingOccurrences(of: ":", with: "-")
+            let destination = recovery.appendingPathComponent("failed-\(stamp).wav")
+            try manager.moveItem(at: url, to: destination)
+            DiagnosticLog.log("recording preserved: \(destination.lastPathComponent)")
+            let kept = try manager.contentsOfDirectory(at: recovery, includingPropertiesForKeys: nil)
+                .filter { $0.pathExtension == "wav" }
+                .sorted { $0.lastPathComponent > $1.lastPathComponent }
+            for stale in kept.dropFirst(10) {
+                try? manager.removeItem(at: stale)
+            }
+        } catch {
+            DiagnosticLog.log("recording preserve failed: \(error.localizedDescription)")
+        }
+    }
+
+    private static func isTransientLocalError(_ error: Error) -> Bool {
+        if let urlError = error as? URLError {
+            return [
+                .timedOut, .cannotConnectToHost, .networkConnectionLost, .cannotFindHost,
+            ].contains(urlError.code)
+        }
+        if case VoiceAPIError.serviceUnavailable = error { return true }
+        return false
     }
 
     private func ensureCurrent(_ session: UUID) throws {

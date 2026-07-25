@@ -27,6 +27,13 @@ enum VoiceAPIError: LocalizedError {
 
 struct VoiceAPI {
     private let session: URLSession
+    /// Final transcription runs as long as the audio demands (cold model load
+    /// alone can exceed 10s; a 3-minute recording takes tens of seconds on
+    /// MLX). The short `session` timeouts killed those requests mid-flight and
+    /// surfaced as "recorded but nothing pasted", so final STT uses its own
+    /// session with generous ceilings; per-request timeouts stay scaled to
+    /// audio length in transcribeLocal/transcribeGroq.
+    private let transcribeSession: URLSession
 
     init() {
         let configuration = URLSessionConfiguration.ephemeral
@@ -34,6 +41,18 @@ struct VoiceAPI {
         configuration.timeoutIntervalForRequest = 8
         configuration.timeoutIntervalForResource = 10
         session = URLSession(configuration: configuration)
+        let transcribeConfiguration = URLSessionConfiguration.ephemeral
+        transcribeConfiguration.requestCachePolicy = .reloadIgnoringLocalCacheData
+        transcribeConfiguration.timeoutIntervalForRequest = 120
+        transcribeConfiguration.timeoutIntervalForResource = 300
+        transcribeSession = URLSession(configuration: transcribeConfiguration)
+    }
+
+    /// Base 20s covers model warm-up and dispatch; add real-time-factor
+    /// headroom proportional to audio duration (16kHz mono 16-bit = 32KB/s).
+    static func finalTranscribeTimeout(audioBytes: Int) -> TimeInterval {
+        let audioSeconds = TimeInterval(audioBytes) / 32_000
+        return min(240, 20 + audioSeconds * 1.2)
     }
 
     func transcribeLocal(
@@ -49,10 +68,10 @@ struct VoiceAPI {
         let url = LocalRuntimeConfiguration.endpoint.appendingPathComponent("/")
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
-        request.timeoutInterval = 8
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         let audio = try Data(contentsOf: fileURL)
         guard audio.count <= Self.maxAudioBytes else { throw VoiceAPIError.responseTooLarge }
+        request.timeoutInterval = partial ? 8 : Self.finalTranscribeTimeout(audioBytes: audio.count)
         let body = try JSONSerialization.data(
             withJSONObject: Self.localRequestObject(
                 audio: audio,
@@ -72,8 +91,14 @@ struct VoiceAPI {
             forHTTPHeaderField: "X-NexVoice-Local-Proof"
         )
 
-        let (data, response) = try await limitedData(for: request)
+        let (data, response) = try await limitedData(
+            for: request,
+            using: partial ? session : transcribeSession
+        )
         try validate(response)
+        // Empty text is a legitimate outcome (silence gate) for a final pass:
+        // it must flow through to the transcript guards ("內容過短") instead of
+        // masquerading as a protocol failure.
         guard let manifest = LocalRuntimeContract.bundledManifest,
               let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
               let text = object["text"] as? String,
@@ -84,7 +109,7 @@ struct VoiceAPI {
               (object["contract_version"] as? NSNumber)?.intValue == manifest.contractVersion,
               object["runtime_build"] as? String == manifest.runtimeBuild,
               (object["instance_id"] as? String).flatMap(UUID.init(uuidString:)) != nil,
-              !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              partial == false || !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               text.utf8.count <= Self.maxTranscriptBytes,
               LocalRuntimeChallenge.verify(
                   proofBase64: object["response_proof"] as? String,
@@ -136,12 +161,12 @@ struct VoiceAPI {
 
         var request = URLRequest(url: URL(string: "https://api.groq.com/openai/v1/audio/transcriptions")!)
         request.httpMethod = "POST"
-        request.timeoutInterval = 8
+        request.timeoutInterval = Self.finalTranscribeTimeout(audioBytes: body.count)
         request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
         request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
         request.httpBody = body
 
-        let (data, response) = try await limitedData(for: request)
+        let (data, response) = try await limitedData(for: request, using: transcribeSession)
         try validate(response)
         guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
               let text = object["text"] as? String,
@@ -314,9 +339,10 @@ struct VoiceAPI {
 
     private func limitedData(
         for request: URLRequest,
-        maxBytes: Int = 1_048_576
+        maxBytes: Int = 1_048_576,
+        using overrideSession: URLSession? = nil
     ) async throws -> (Data, URLResponse) {
-        let (bytes, response) = try await session.bytes(for: request)
+        let (bytes, response) = try await (overrideSession ?? session).bytes(for: request)
         if response.expectedContentLength > Int64(maxBytes) {
             throw VoiceAPIError.responseTooLarge
         }

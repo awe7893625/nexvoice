@@ -71,11 +71,13 @@ _PARTIAL_GATE = threading.Lock()
 _MODEL_CACHE: dict[str, object] = {}
 _SHUTTING_DOWN = threading.Event()
 
+# Distinctive product names only. Whisper mirrors the *style* of the initial
+# prompt, so a long "、"-separated glossary teaches the decoder to sprinkle
+# 頓號 lists into ordinary speech (the "NexVoice、Jonel、…" artifact). Common
+# tech words decode fine without hints and only bloat that list.
 BASE_TERMS = [
     "NexVoice", "NexPilot", "NexDesk", "Typeless", "Whisper", "MLX",
-    "Hammerspoon", "Obsidian", "API", "endpoint", "prompt", "model",
-    "token", "context", "inference", "deploy", "rollback", "debug",
-    "frontend", "backend", "database", "latency", "async", "JSON",
+    "Hammerspoon", "Obsidian",
 ]
 
 
@@ -177,11 +179,19 @@ def safe_vocab_terms(value: object) -> list[str]:
     return result
 
 
+# The decoder conditions on the initial prompt as if it were the preceding
+# transcript, so the *last* sentences dominate the output style. The glossary
+# therefore goes first (parenthesized, clearly out-of-band) and the primer
+# ends with natural prose demonstrating the punctuation we want: 逗號 for
+# pauses, 句號 to close a thought, no 頓號 lists.
+STYLE_TAIL = (
+    "以下是一段繁體中文與英文混用的口語聽寫逐字稿。"
+    "說話的人會自然地講完整的句子，停頓的地方用逗號分隔，"
+    "一件事說完就用句號結束，需要提問時才用問號。"
+)
+
+
 def build_initial_prompt(vocab_terms: list[str], *, partial: bool = False) -> str:
-    primer = (
-        "以下是一段繁體中文與英文混用的完整逐字稿，請忠實轉錄，"
-        "並正確使用逗號、句號、問號與驚嘆號。"
-    )
     # User terms take priority. Partial captions use a smaller hint set to keep
     # the preview fast; the final pass always receives the complete snapshot.
     requested = vocab_terms[:16] if partial else vocab_terms
@@ -191,15 +201,56 @@ def build_initial_prompt(vocab_terms: list[str], *, partial: bool = False) -> st
         key = term.casefold()
         if key in seen:
             continue
-        candidate_terms = terms + [term]
-        candidate = primer + "可能出現的專有名詞：" + "、".join(candidate_terms) + "。"
+        candidate = "（詞彙提示：" + "、".join(terms + [term]) + "。）" + STYLE_TAIL
         if len(candidate.encode("utf-8")) > MAX_PROMPT_BYTES:
             continue
         seen.add(key)
         terms.append(term)
     if terms:
-        primer += "可能出現的專有名詞：" + "、".join(terms) + "。"
-    return primer
+        return "（詞彙提示：" + "、".join(terms) + "。）" + STYLE_TAIL
+    return STYLE_TAIL
+
+
+_SENTENCE_ENDERS = "，。！？；：、,.!?;:…"
+
+
+def join_segments_with_punctuation(segments: list) -> str:
+    """Rebuild the transcript from timed segments, closing audible pauses.
+
+    Whisper often leaves clause boundaries unpunctuated in Mandarin. The
+    segment timestamps carry the missing signal: a real pause between two
+    segments is a spoken clause/sentence break, so supply 逗號 for short
+    pauses and 句號 for long ones (ASCII context gets ", "/". ") whenever the
+    decoder didn't already end the segment with punctuation.
+    """
+    out = ""
+    prev_end = None
+    for seg in segments:
+        if not isinstance(seg, dict):
+            continue
+        text = str(seg.get("text", ""))
+        stripped = text.strip()
+        if not stripped:
+            continue
+        try:
+            start = float(seg.get("start", 0.0))
+            end = float(seg.get("end", start))
+        except (TypeError, ValueError):
+            start = end = None
+        tail = out.rstrip()
+        if tail and prev_end is not None and start is not None:
+            gap = start - prev_end
+            if gap >= 0.6 and tail[-1] not in _SENTENCE_ENDERS:
+                ascii_context = ord(tail[-1]) < 128 and ord(stripped[0]) < 128
+                if gap >= 1.5:
+                    mark = ". " if ascii_context else "。"
+                else:
+                    mark = ", " if ascii_context else "，"
+                out = tail + mark
+                text = text.lstrip()
+        out += text
+        prev_end = end if end is not None else prev_end
+    return out.strip()
 
 
 # A phrase (2-32 chars) repeated 3+ times back-to-back over a span of ≥10
@@ -289,7 +340,12 @@ def transcribe_wav(
     finally:
         if quality == "partial" and partial_gate_acquired:
             _PARTIAL_GATE.release()
-    return collapse_repetition_loops(str(result.get("text", "")).strip())
+    segments = result.get("segments")
+    if isinstance(segments, list) and segments:
+        text = join_segments_with_punctuation(segments)
+    else:
+        text = str(result.get("text", "")).strip()
+    return collapse_repetition_loops(text)
 
 
 class Handler(BaseHTTPRequestHandler):
