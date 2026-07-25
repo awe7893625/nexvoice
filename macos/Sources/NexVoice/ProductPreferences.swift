@@ -26,6 +26,9 @@ enum HUDStyle: String, CaseIterable, Codable, Sendable {
     case ekg
     case meteor
     case plasma
+    case silk
+    case cascade
+    case eclipse
 
     var displayName: String {
         switch self {
@@ -44,6 +47,9 @@ enum HUDStyle: String, CaseIterable, Codable, Sendable {
         case .ekg: "心電"
         case .meteor: "流星群"
         case .plasma: "電漿"
+        case .silk: "絲綢"
+        case .cascade: "光瀑"
+        case .eclipse: "日蝕"
         }
     }
 }

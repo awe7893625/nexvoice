@@ -471,6 +471,12 @@ struct HUDVisualization: View {
                 MeteorShower(levels: levels)
             case .plasma:
                 Plasma(levels: levels)
+            case .silk:
+                Silk(levels: levels)
+            case .cascade:
+                Cascade(levels: levels)
+            case .eclipse:
+                Eclipse(levels: levels)
             }
         }
         .frame(width: 64, height: 22)
@@ -1506,23 +1512,28 @@ private struct EKG: View {
                 let w = Double(size.width)
                 let h = Double(size.height)
                 let cy = h / 2
-                let amp = 1.6 + power * 3.6
+                let amp = 4.5 + power * 6.0
                 let rate = 0.85 + power * 0.35
                 let scanX = (t * 24 * rate).truncatingRemainder(dividingBy: w)
                 let trail = 9 + power * 4
 
                 func baseline(_ x: Double) -> Double {
-                    cy + sin(x * 0.16 + t * 1.4 * rate) * 0.42
+                    cy + sin(x * 0.16 + t * 1.4 * rate) * 1.2
                 }
-                func waveform(_ x: Double) -> Double {
-                    let d = x - scanX
-                    let envelope = exp(-(d * d) / (7 + power * 7))
-                    let spike = envelope * (
+                func packet(_ x: Double, _ center: Double) -> Double {
+                    let d = x - center
+                    let envelope = exp(-(d * d) / (26 + power * 30))
+                    return envelope * (
                         sin(d * 0.9) * amp * 0.32 +
                         sin(d * 1.7) * amp * 0.58 +
                         sin(d * 0.34) * amp * 0.2
                     )
-                    return baseline(x) + spike
+                }
+                func waveform(_ x: Double) -> Double {
+                    // Two relay pulse packets so the trace never reads as an
+                    // empty flat line between beats.
+                    let second = (scanX + w / 2).truncatingRemainder(dividingBy: w)
+                    return baseline(x) + packet(x, scanX) + packet(x, second) * 0.7
                 }
 
                 var basePoints: [CGPoint] = []
@@ -1532,7 +1543,7 @@ private struct EKG: View {
                 basePath.addLines(basePoints)
                 canvas.stroke(
                     basePath,
-                    with: .color(Color(red: 0.24, green: 0.80, blue: 1.0).opacity(0.20)),
+                    with: .color(Color(red: 0.24, green: 0.80, blue: 1.0).opacity(0.30)),
                     style: StrokeStyle(lineWidth: 3.6 * bloom, lineCap: .round, lineJoin: .round)
                 )
 
@@ -1800,6 +1811,241 @@ private struct Plasma: View {
                 canvas.fill(
                     Path(ellipseIn: CGRect(x: nodeX - nodeRadius, y: nodeY - nodeRadius, width: nodeRadius * 2, height: nodeRadius * 2)),
                     with: .color(.white)
+                )
+            }
+        }
+    }
+}
+
+/// "絲綢" (Silk) -- ported from the NexVoice HUD Lab p3 mockup's 絲綢
+/// variant: two flowing ribbon strands (cream main + warm-gold secondary),
+/// each an amplitude-modulated sine riding a slower cosine envelope,
+/// through the halo+gradient double-stroke bloom convention shared with
+/// CometTrail/Helix/Mercury. The envelope spans the middle ~84% of the
+/// width (not tapered fully to the edges) so idle silence still reads as a
+/// wide, present ribbon rather than a pinched flat line.
+private struct Silk: View {
+    let levels: [Double]
+
+    var body: some View {
+        TimelineView(.animation(minimumInterval: 0.03)) { context in
+            let t = context.date.timeIntervalSinceReferenceDate
+            let voiceLevel = levels.last ?? 0
+            let (power, bloom) = nexVoiceHUDLabPower(t: t, level: voiceLevel)
+
+            Canvas { canvas, size in
+                let w = Double(size.width)
+                let h = Double(size.height)
+                let cy = h / 2
+                let start = w * 0.08
+                let span = w * 0.84
+                let amp = h * (0.16 + power * 0.30)
+                let rate = 0.85 + power * 0.35
+
+                func strand(offset: Double) -> Path {
+                    var points: [CGPoint] = []
+                    var x = 0.0
+                    while x <= w {
+                        let p = min(1, max(0, (x - start) / span))
+                        let envelope = sin(p * .pi)
+                        let kx = x * 0.11
+                        let y = cy + sin(kx + t * 2.1 * rate + offset) * amp * envelope
+                            * cos(t * 1.3 * rate + x * 0.025)
+                        points.append(CGPoint(x: x, y: y))
+                        x += 1
+                    }
+                    var path = Path()
+                    path.addLines(points)
+                    return path
+                }
+
+                let main = strand(offset: 0)
+                canvas.stroke(
+                    main,
+                    with: .color(Color(red: 0.97, green: 0.83, blue: 0.62).opacity(0.30)),
+                    style: StrokeStyle(lineWidth: 5.4 * bloom, lineCap: .round, lineJoin: .round)
+                )
+                canvas.stroke(
+                    main,
+                    with: .color(Color(red: 1.0, green: 0.90, blue: 0.80).opacity(0.96)),
+                    style: StrokeStyle(lineWidth: 2.0, lineCap: .round, lineJoin: .round)
+                )
+
+                let secondary = strand(offset: 1.5)
+                canvas.stroke(
+                    secondary,
+                    with: .color(Color(red: 0.82, green: 0.65, blue: 0.49).opacity(0.20)),
+                    style: StrokeStyle(lineWidth: 3.6 * bloom, lineCap: .round, lineJoin: .round)
+                )
+                canvas.stroke(
+                    secondary,
+                    with: .color(Color(red: 0.89, green: 0.72, blue: 0.55).opacity(0.88)),
+                    style: StrokeStyle(lineWidth: 1.3, lineCap: .round, lineJoin: .round)
+                )
+            }
+        }
+    }
+}
+
+/// "光瀑" (Cascade) -- ported from the NexVoice HUD Lab p3 mockup's 光瀑
+/// variant: a cyan/white light stream of particles advancing left-to-right
+/// in a fixed relay (deterministic per-particle size via nexVoiceSeeded, no
+/// Double.random) riding a glowing guide track that carries the
+/// halo+gradient bloom look shared with CometTrail/MeteorShower. Particle
+/// count reduced from the mockup's 12 to 9 (perf, matches CometTrail's own
+/// 9->6 reduction) with larger radius/alpha to keep the density feel.
+private struct Cascade: View {
+    let levels: [Double]
+    private static let count = 9
+
+    var body: some View {
+        TimelineView(.animation(minimumInterval: 0.03)) { context in
+            let t = context.date.timeIntervalSinceReferenceDate
+            let voiceLevel = levels.last ?? 0
+            let (power, bloom) = nexVoiceHUDLabPower(t: t, level: voiceLevel)
+
+            Canvas { canvas, size in
+                let w = Double(size.width)
+                let h = Double(size.height)
+                let cy = h / 2
+                let rate = 0.85 + power * 0.35
+                let heightAmp = h * (0.20 + power * 0.32)
+
+                func trackY(_ x: Double) -> Double {
+                    let n = min(1, max(0, x / w))
+                    let envelope = sin(n * .pi)
+                    return cy + sin(x * 0.12 + t * 2.6 * rate) * heightAmp * envelope
+                }
+
+                var trackPoints: [CGPoint] = []
+                var x = 0.0
+                while x <= w { trackPoints.append(CGPoint(x: x, y: trackY(x))); x += 1 }
+                var track = Path()
+                track.addLines(trackPoints)
+
+                canvas.stroke(
+                    track,
+                    with: .color(Color(red: 0.29, green: 0.69, blue: 0.85).opacity(0.22)),
+                    style: StrokeStyle(lineWidth: 4.8 * bloom, lineCap: .round, lineJoin: .round)
+                )
+                canvas.stroke(
+                    track,
+                    with: .color(Color(red: 0.55, green: 0.91, blue: 1.0).opacity(0.90)),
+                    style: StrokeStyle(lineWidth: 1.4, lineCap: .round, lineJoin: .round)
+                )
+
+                let speed = w * (0.55 + power * 0.95)
+                let spacing = w * 1.15 / Double(Self.count)
+                for i in 0..<Self.count {
+                    let xPos = (Double(i) * spacing + t * speed)
+                        .truncatingRemainder(dividingBy: w + spacing) - spacing * 0.5
+                    guard xPos > -3 && xPos < w + 3 else { continue }
+                    let clampedX = max(0, min(w, xPos))
+                    let yPos = trackY(clampedX) + sin(xPos * 0.22 + t * 3.4 * rate + Double(i)) * heightAmp * 0.22
+                    let r: CGFloat = 1.5 + CGFloat(nexVoiceSeeded(Double(i) * 5.6)) * 0.9
+                    let color = i % 2 == 0
+                        ? Color(red: 0.55, green: 0.91, blue: 1.0)
+                        : Color.white
+                    canvas.fill(
+                        Path(ellipseIn: CGRect(x: xPos - r, y: yPos - r, width: r * 2, height: r * 2)),
+                        with: .radialGradient(
+                            Gradient(colors: [.white, color, color.opacity(0)]),
+                            center: CGPoint(x: xPos, y: yPos),
+                            startRadius: 0,
+                            endRadius: r
+                        )
+                    )
+                }
+            }
+        }
+    }
+}
+
+/// "日蝕" (Eclipse) -- reworked from the NexVoice HUD Lab p3 mockup's 日蝕
+/// variant for the 78x26 horizontal capsule: the mockup's centered circular
+/// corona is stretched into a wide horizontal composition (elliptical
+/// corona rings + two outward-sweeping prominence streaks reaching toward
+/// each end of the capsule) so idle silence reads as a wide presence across
+/// the frame instead of one small dot pinched in the middle -- the failure
+/// mode that got the retired "量子" variant sent back. The dark core stays
+/// centered, ringed by a bright eclipse-ring stroke (the halo+gradient
+/// bloom convention shared with CometTrail/Helix/Mercury).
+private struct Eclipse: View {
+    let levels: [Double]
+
+    var body: some View {
+        TimelineView(.animation(minimumInterval: 0.03)) { context in
+            let t = context.date.timeIntervalSinceReferenceDate
+            let voiceLevel = levels.last ?? 0
+            let (power, bloom) = nexVoiceHUDLabPower(t: t, level: voiceLevel)
+
+            Canvas { canvas, size in
+                let w = Double(size.width)
+                let h = Double(size.height)
+                let cx = w / 2
+                let cy = h / 2
+                let rate = 0.85 + power * 0.35
+                let coreRadius = h * (0.24 + power * 0.16)
+
+                // Elliptical corona rings -- the mockup's circular corona
+                // stretched wide so it reads as a horizontal light band
+                // instead of a small centered dot.
+                for ring in 0..<3 {
+                    let rx = coreRadius + w * (0.11 + Double(ring) * 0.115) + power * 2
+                    let ry = coreRadius + h * (0.05 + Double(ring) * 0.03)
+                    let a = (0.5 - Double(ring) * 0.14) * (0.7 + power * 0.3)
+                    canvas.stroke(
+                        Path(ellipseIn: CGRect(x: cx - rx, y: cy - ry, width: rx * 2, height: ry * 2)),
+                        with: .color(Color(red: 1.0, green: 0.60, blue: 0.35).opacity(a)),
+                        style: StrokeStyle(lineWidth: 1.1)
+                    )
+                }
+
+                // Crescent prominence streaks sweeping out from the core
+                // toward each end of the capsule -- ports the mockup's two
+                // side flare rects as flowing arcs so they read as
+                // continuous light reaching the frame edges, not dots.
+                let reach = w * (0.36 + power * 0.10)
+                func prominence(direction: Double) -> Path {
+                    var points: [CGPoint] = []
+                    var i = 0.0
+                    while i <= 1 {
+                        let x = cx + direction * (coreRadius + 2 + i * reach)
+                        let wobble = sin(i * .pi) * sin(t * 2.2 * rate + i * 4 + direction * 1.6) * (1.1 + power * 1.9)
+                        points.append(CGPoint(x: x, y: cy + wobble))
+                        i += 0.06
+                    }
+                    var path = Path()
+                    path.addLines(points)
+                    return path
+                }
+
+                for direction in [-1.0, 1.0] {
+                    let band = prominence(direction: direction)
+                    canvas.stroke(
+                        band,
+                        with: .color(Color(red: 1.0, green: 0.58, blue: 0.33).opacity(0.22)),
+                        style: StrokeStyle(lineWidth: 4.0 * bloom, lineCap: .round, lineJoin: .round)
+                    )
+                    canvas.stroke(
+                        band,
+                        with: .color(Color(red: 1.0, green: 0.80, blue: 0.58).opacity(0.90)),
+                        style: StrokeStyle(lineWidth: 1.2, lineCap: .round, lineJoin: .round)
+                    )
+                }
+
+                // Dark core ringed by the bright eclipse-ring stroke.
+                let coreRect = CGRect(x: cx - coreRadius, y: cy - coreRadius, width: coreRadius * 2, height: coreRadius * 2)
+                canvas.fill(Path(ellipseIn: coreRect), with: .color(Color(red: 0.043, green: 0.043, blue: 0.055)))
+                canvas.stroke(
+                    Path(ellipseIn: coreRect),
+                    with: .color(Color(red: 1.0, green: 0.42, blue: 0.21).opacity(0.30)),
+                    style: StrokeStyle(lineWidth: 3.2 * bloom)
+                )
+                canvas.stroke(
+                    Path(ellipseIn: coreRect),
+                    with: .color(Color(red: 1.0, green: 0.71, blue: 0.51).opacity(0.96)),
+                    style: StrokeStyle(lineWidth: 1.5)
                 )
             }
         }
