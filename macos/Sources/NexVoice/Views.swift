@@ -865,11 +865,16 @@ private struct SettingsPage: View {
                                 model.productPreferences.hudStyle = style
                             } label: {
                                 VStack(spacing: 10) {
-                                    HUDVisualization(
-                                        style: style,
-                                        levels: [0.12, 0.35, 0.7, 0.42, 0.9, 0.5, 0.22, 0.65, 0.38, 0.78, 0.3]
-                                    )
-                                    .scaleEffect(0.78)
+                                    TimelineView(.animation(minimumInterval: 0.06)) { context in
+                                        let t = context.date.timeIntervalSinceReferenceDate
+                                        let synthetic: [Double] = (0..<11).map { i -> Double in
+                                            let di = Double(i)
+                                            let wave: Double = abs(sin(t * 1.8 + di * 0.62))
+                                            let drift: Double = 0.6 + 0.4 * sin(t * 0.9 + di)
+                                            return 0.30 + 0.50 * wave * drift
+                                        }
+                                        HUDVisualization(style: style, levels: synthetic)
+                                    }
                                     .frame(width: 110, height: 50)
                                     .frame(maxWidth: .infinity)
                                     .background(

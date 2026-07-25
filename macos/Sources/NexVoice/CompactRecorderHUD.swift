@@ -204,6 +204,39 @@ private struct CompactRecorderView: View {
     }
 }
 
+/// Faithful port of the ChatGPT "純黑玻璃" reference: ~27 rounded luminous
+/// white bars with bloom, heights mixing live level, per-bar phase motion
+/// and a center-weighted envelope so the cluster breathes like Siri's.
+private struct GlassBars: View {
+    let levels: [Double]
+
+    private static let barCount = 23
+
+    var body: some View {
+        TimelineView(.animation(minimumInterval: 0.04)) { context in
+            let t = context.date.timeIntervalSinceReferenceDate
+            let level = levels.last ?? 0
+            let energy = 0.45 + min(1, level) * 0.55
+            HStack(alignment: .center, spacing: 1.3) {
+                ForEach(0..<Self.barCount, id: \.self) { index in
+                    let u = Double(index) / Double(Self.barCount - 1)
+                    // Center-weighted, with two side lobes so it's not a plain hill.
+                    let envelope = 0.30 + 0.70 * pow(sin(u * .pi), 1.4)
+                        + 0.18 * sin(u * .pi * 3.1)
+                    let wobble = 0.5 + 0.5 * sin(t * 5.2 + Double(index) * 0.9)
+                        * sin(t * 2.3 + Double(index) * 0.35)
+                    let h = max(0.10, envelope * (0.28 + 0.72 * wobble) * energy)
+                    Capsule()
+                        .fill(Color.white.opacity(0.96))
+                        .frame(width: 2.2, height: max(3.0, 24 * h))
+                        .shadow(color: .white.opacity(0.9), radius: 2.6)
+                        .shadow(color: .white.opacity(0.4), radius: 6)
+                }
+            }
+        }
+    }
+}
+
 /// Obsidian base shared by all chromes; each case layers its own frame on top.
 struct HUDCapsuleChrome: View {
     let chrome: HUDChrome
@@ -221,6 +254,22 @@ struct HUDCapsuleChrome: View {
                     endPoint: .bottom
                 )
             )
+            .overlay(
+                Capsule()
+                    .fill(
+                        LinearGradient(
+                            stops: [
+                                .init(color: .white.opacity(0.13), location: 0),
+                                .init(color: .white.opacity(0.04), location: 0.38),
+                                .init(color: .clear, location: 0.55),
+                            ],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                    )
+                    .padding(1)
+                    .allowsHitTesting(false)
+            )
             .shadow(color: .black.opacity(0.35), radius: 8, y: 3)
     }
 
@@ -237,6 +286,22 @@ struct HUDCapsuleChrome: View {
                     startPoint: .top,
                     endPoint: .bottom
                 )
+            )
+            .overlay(
+                Capsule()
+                    .fill(
+                        LinearGradient(
+                            stops: [
+                                .init(color: .white.opacity(0.13), location: 0),
+                                .init(color: .white.opacity(0.04), location: 0.38),
+                                .init(color: .clear, location: 0.55),
+                            ],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                    )
+                    .padding(1)
+                    .allowsHitTesting(false)
             )
             .shadow(color: .black.opacity(0.35), radius: 8, y: 3)
     }
@@ -376,6 +441,8 @@ struct HUDVisualization: View {
     var body: some View {
         Group {
             switch style {
+            case .glassBars:
+                GlassBars(levels: levels)
             case .glass:
                 WaterWave(levels: levels)
             case .ink:

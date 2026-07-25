@@ -11,6 +11,7 @@ enum VoiceMode: String, CaseIterable, Codable, Sendable {
 }
 
 enum HUDStyle: String, CaseIterable, Codable, Sendable {
+    case glassBars
     case glass
     case ink
     case aurora
@@ -32,6 +33,7 @@ enum HUDStyle: String, CaseIterable, Codable, Sendable {
 
     var displayName: String {
         switch self {
+        case .glassBars: "亮條"
         case .glass: "琉璃"
         case .ink: "墨韻"
         case .aurora: "極光"
