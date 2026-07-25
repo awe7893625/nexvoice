@@ -61,6 +61,9 @@ enum HUDChrome: String, CaseIterable, Codable, Sendable {
     case hairline
     case glowEdge
     case breathingRing
+    case naked
+    case aura
+    case emboss
 
     var displayName: String {
         switch self {
@@ -68,6 +71,9 @@ enum HUDChrome: String, CaseIterable, Codable, Sendable {
         case .hairline: "髮絲細邊"
         case .glowEdge: "流光邊"
         case .breathingRing: "呼吸光環"
+        case .naked: "超薄無底"
+        case .aura: "微光流體"
+        case .emboss: "浮雕"
         }
     }
 }

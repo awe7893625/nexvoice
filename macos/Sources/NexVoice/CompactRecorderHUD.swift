@@ -175,13 +175,14 @@ private struct CompactRecorderView: View {
         .frame(width: 64, height: 24)
         .padding(.horizontal, 8)
         .frame(width: 80, height: 36)
-        .background(HUDCapsuleChrome(chrome: model.chrome))
+        .background(HUDCapsuleChrome(chrome: model.chrome, busy: model.isBusy))
     }
 }
 
 /// Obsidian base shared by all chromes; each case layers its own frame on top.
 struct HUDCapsuleChrome: View {
     let chrome: HUDChrome
+    var busy: Bool = false
 
     private var base: some View {
         RoundedRectangle(cornerRadius: 18, style: .continuous)
@@ -196,6 +197,50 @@ struct HUDCapsuleChrome: View {
                 )
             )
             .shadow(color: .black.opacity(0.45), radius: 14, y: 6)
+    }
+
+    /// Warmer, metallic base used by `.emboss` -- colors lifted from the
+    /// pack-B mockup's 浮雕 variant `drawEmboss()` glass fill.
+    private var embossBase: some View {
+        RoundedRectangle(cornerRadius: 18, style: .continuous)
+            .fill(
+                LinearGradient(
+                    colors: [
+                        Color(red: 0.333, green: 0.322, blue: 0.298),
+                        Color(red: 0.122, green: 0.118, blue: 0.110),
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+            )
+            .shadow(color: .black.opacity(0.45), radius: 14, y: 6)
+    }
+
+    /// Wraparound-safe trim segment: draws `length` of the capsule's
+    /// perimeter starting at `start` (both in the 0...1 trim space),
+    /// splitting into two trims when the segment crosses the 1 -> 0 seam.
+    @ViewBuilder
+    private func scanSegment(from start: Double, length: Double, opacity: Double, lineWidth: Double) -> some View {
+        let end = start + length
+        if end <= 1 {
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .trim(from: start, to: end)
+                .stroke(Color.white.opacity(opacity), lineWidth: lineWidth)
+        } else {
+            ZStack {
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .trim(from: start, to: 1)
+                    .stroke(Color.white.opacity(opacity), lineWidth: lineWidth)
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .trim(from: 0, to: end - 1)
+                    .stroke(Color.white.opacity(opacity), lineWidth: lineWidth)
+            }
+        }
+    }
+
+    private func wrapped01(_ value: Double) -> Double {
+        let remainder = value.truncatingRemainder(dividingBy: 1)
+        return remainder < 0 ? remainder + 1 : remainder
     }
 
     var body: some View {
@@ -240,10 +285,59 @@ struct HUDCapsuleChrome: View {
             base.overlay {
                 TimelineView(.animation(minimumInterval: 0.05)) { context in
                     let t = context.date.timeIntervalSinceReferenceDate
-                    let breathe = 0.5 + 0.5 * sin(t * 1.6)
+                    if busy {
+                        // Clockwise scan light, mirroring the pack-B mockup's
+                        // 呼吸 variant thinking-state sweep: head speed 0.22
+                        // turns/sec, ~0.18 of the perimeter lit, brightest at
+                        // the leading edge and fading through a dim tail.
+                        let head = wrapped01(t * 0.22)
+                        let tailStart = wrapped01(head - 0.18)
+                        ZStack {
+                            scanSegment(from: tailStart, length: 0.12, opacity: 0.18, lineWidth: 1.2)
+                            scanSegment(from: head, length: 0.06, opacity: 0.5, lineWidth: 1.2)
+                                .shadow(color: .white.opacity(0.3), radius: 3)
+                        }
+                    } else {
+                        let breathe = 0.5 + 0.5 * sin(t * 1.6)
+                        RoundedRectangle(cornerRadius: 18, style: .continuous)
+                            .strokeBorder(Color.white.opacity(0.10 + 0.22 * breathe), lineWidth: 1)
+                            .shadow(color: .white.opacity(0.12 * breathe), radius: 5)
+                    }
+                }
+            }
+        case .naked:
+            Color.clear
+        case .aura:
+            TimelineView(.animation(minimumInterval: 0.05)) { context in
+                let t = context.date.timeIntervalSinceReferenceDate
+                let breathe = 0.5 + 0.5 * sin(t * 1.4)
+                ZStack {
                     RoundedRectangle(cornerRadius: 18, style: .continuous)
-                        .strokeBorder(Color.white.opacity(0.10 + 0.22 * breathe), lineWidth: 1)
-                        .shadow(color: .white.opacity(0.12 * breathe), radius: 5)
+                        .fill(
+                            LinearGradient(
+                                colors: [
+                                    Color(red: 0.494, green: 0.91, blue: 0.839),
+                                    Color(red: 0.592, green: 0.541, blue: 1.0),
+                                    Color(red: 1.0, green: 0.549, blue: 0.835),
+                                ],
+                                startPoint: .leading,
+                                endPoint: .trailing
+                            )
+                        )
+                        .blur(radius: 10)
+                        .opacity(0.45 + 0.2 * breathe)
+                        .scaleEffect(1.06)
+                    base
+                }
+            }
+        case .emboss:
+            embossBase.overlay {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        .strokeBorder(Color.black.opacity(0.5), lineWidth: 0.75)
+                    RoundedRectangle(cornerRadius: 16.5, style: .continuous)
+                        .strokeBorder(Color.white.opacity(0.18), lineWidth: 0.75)
+                        .padding(1.5)
                 }
             }
         }
