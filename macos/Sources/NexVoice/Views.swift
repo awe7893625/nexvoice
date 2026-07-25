@@ -867,11 +867,14 @@ private struct SettingsPage: View {
                                 VStack(spacing: 10) {
                                     TimelineView(.animation(minimumInterval: 0.06)) { context in
                                         let t = context.date.timeIntervalSinceReferenceDate
+                                        // Calm speech-like preview: a slow breath with occasional
+                                        // gentle swells, never the frantic full-range pumping that
+                                        // made the whole grid feel jittery.
                                         let synthetic: [Double] = (0..<11).map { i -> Double in
                                             let di = Double(i)
-                                            let wave: Double = abs(sin(t * 1.8 + di * 0.62))
-                                            let drift: Double = 0.6 + 0.4 * sin(t * 0.9 + di)
-                                            return 0.30 + 0.50 * wave * drift
+                                            let breath: Double = 0.5 + 0.5 * sin(t * 0.55 + di * 0.3)
+                                            let swell: Double = max(0, sin(t * 0.23))
+                                            return 0.14 + 0.10 * breath + 0.22 * swell
                                         }
                                         HUDVisualization(style: style, levels: synthetic)
                                     }

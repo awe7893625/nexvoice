@@ -214,17 +214,17 @@ private struct GlassBars: View {
 
     var body: some View {
         TimelineView(.animation(minimumInterval: 0.04)) { context in
-            let t = context.date.timeIntervalSinceReferenceDate
+            let t = nexVoiceHUDTime(context.date)
             let level = levels.last ?? 0
-            let energy = 0.45 + min(1, level) * 0.55
+            let energy = 0.22 + min(1, level) * 0.78
             HStack(alignment: .center, spacing: 1.3) {
                 ForEach(0..<Self.barCount, id: \.self) { index in
                     let u = Double(index) / Double(Self.barCount - 1)
                     // Center-weighted, with two side lobes so it's not a plain hill.
                     let envelope = 0.30 + 0.70 * pow(sin(u * .pi), 1.4)
                         + 0.18 * sin(u * .pi * 3.1)
-                    let wobble = 0.5 + 0.5 * sin(t * 5.2 + Double(index) * 0.9)
-                        * sin(t * 2.3 + Double(index) * 0.35)
+                    let wobble = 0.5 + 0.5 * sin(t * 2.4 + Double(index) * 0.9)
+                        * sin(t * 1.1 + Double(index) * 0.35)
                     let h = max(0.10, envelope * (0.28 + 0.72 * wobble) * energy)
                     Capsule()
                         .fill(Color.white.opacity(0.96))
@@ -352,7 +352,7 @@ struct HUDCapsuleChrome: View {
         case .glowEdge:
             base.overlay {
                 TimelineView(.animation(minimumInterval: 0.05)) { context in
-                    let t = context.date.timeIntervalSinceReferenceDate
+                    let t = nexVoiceHUDTime(context.date)
                     Capsule()
                         .strokeBorder(
                             AngularGradient(
@@ -374,7 +374,7 @@ struct HUDCapsuleChrome: View {
         case .breathingRing:
             base.overlay {
                 TimelineView(.animation(minimumInterval: 0.05)) { context in
-                    let t = context.date.timeIntervalSinceReferenceDate
+                    let t = nexVoiceHUDTime(context.date)
                     if busy {
                         // Clockwise scan light, mirroring the pack-B mockup's
                         // 呼吸 variant thinking-state sweep: head speed 0.22
@@ -399,7 +399,7 @@ struct HUDCapsuleChrome: View {
             Color.clear
         case .aura:
             TimelineView(.animation(minimumInterval: 0.05)) { context in
-                let t = context.date.timeIntervalSinceReferenceDate
+                let t = nexVoiceHUDTime(context.date)
                 let breathe = 0.5 + 0.5 * sin(t * 1.4)
                 ZStack {
                     Capsule()
@@ -489,7 +489,7 @@ private struct InkStroke: View {
 
     var body: some View {
         TimelineView(.animation(minimumInterval: 0.05)) { context in
-            let t = context.date.timeIntervalSinceReferenceDate
+            let t = nexVoiceHUDTime(context.date)
             let maxLevel = levels.max() ?? 0
             let baseThickness = 2.2
             let thicknessVariation = 0.62
@@ -556,7 +556,7 @@ private struct AuroraRibbon: View {
 
     var body: some View {
         TimelineView(.animation(minimumInterval: 0.03)) { (context: TimelineViewDefaultContext) in
-            auroraCanvas(t: context.date.timeIntervalSinceReferenceDate)
+            auroraCanvas(t: nexVoiceHUDTime(context.date))
         }
     }
 
@@ -616,7 +616,7 @@ private struct PrecisionWaveform: View {
 
     var body: some View {
         TimelineView(.animation(minimumInterval: 0.05)) { context in
-            let t = context.date.timeIntervalSinceReferenceDate
+            let t = nexVoiceHUDTime(context.date)
             let level = levels.last ?? 0
             HStack(alignment: .center, spacing: 3) {
                 ForEach(0..<7, id: \.self) { index in
@@ -642,7 +642,7 @@ private struct SiriOrb: View {
 
     var body: some View {
         TimelineView(.animation(minimumInterval: 0.03)) { context in
-            let t = context.date.timeIntervalSinceReferenceDate
+            let t = nexVoiceHUDTime(context.date)
             let breathe = 0.5 + 0.5 * sin(t * 1.7)
             let energy = 0.4 + level * 0.9
             let size = 15 + breathe * 4 + level * 7
@@ -701,7 +701,7 @@ private struct WaterWave: View {
 
     var body: some View {
         TimelineView(.animation(minimumInterval: 0.03)) { context in
-            let t = context.date.timeIntervalSinceReferenceDate
+            let t = nexVoiceHUDTime(context.date)
             let voiceLevel = levels.last ?? 0
             let synthFloor = 0.05 + 0.05 * abs(sin(t * 0.8))
             let level = max(voiceLevel, synthFloor)
@@ -873,7 +873,7 @@ private struct TerminalSubtitle: View {
 
     var body: some View {
         TimelineView(.animation(minimumInterval: 0.4)) { context in
-            let blinkOn = Int(context.date.timeIntervalSinceReferenceDate / 0.4).isMultiple(of: 2)
+            let blinkOn = Int(nexVoiceHUDTime(context.date) / 0.4).isMultiple(of: 2)
             HStack(spacing: 4) {
                 Text(text)
                     .font(.system(size: 13, design: .monospaced))
@@ -1001,7 +1001,7 @@ private struct FloatVoice: View {
 
     var body: some View {
         TimelineView(.animation(minimumInterval: 0.03)) { context in
-            let t = context.date.timeIntervalSinceReferenceDate
+            let t = nexVoiceHUDTime(context.date)
             let voiceLevel = levels.last ?? 0
             let synthFloor = 0.05 + 0.05 * abs(sin(t * 0.8))
             let energy = max(voiceLevel, synthFloor)
@@ -1062,7 +1062,7 @@ private struct PrismCore: View {
 
     var body: some View {
         TimelineView(.animation(minimumInterval: 0.03)) { context in
-            let t = context.date.timeIntervalSinceReferenceDate
+            let t = nexVoiceHUDTime(context.date)
             let energy = levels.last ?? 0
             let size: CGFloat = 20
             let baseRadius = size * (0.42 + energy * 0.09 + 0.03 * sin(t * 2))
@@ -1122,7 +1122,7 @@ private struct Ember: View {
 
     var body: some View {
         TimelineView(.animation(minimumInterval: 0.03)) { context in
-            let t = context.date.timeIntervalSinceReferenceDate
+            let t = nexVoiceHUDTime(context.date)
             let voiceLevel = levels.last ?? 0
             let synthFloor = 0.05 + 0.05 * abs(sin(t * 0.8))
             let energy = max(voiceLevel, synthFloor)
@@ -1171,9 +1171,16 @@ private struct Ember: View {
 /// (彗尾/雙螺旋/水銀) -- mirrors GlassBars' `0.45 + level*0.55` pattern so
 /// silence never reads as a dead/frozen indicator: a slow breathing term
 /// keeps power at 0.40+ even at level 0, rising toward 1.0 with real voice.
+/// Global animation clock for every HUD visualization. Real time is scaled
+/// down so motion reads as calm breathing rather than frantic jitter; energy
+/// (not speed) is what voice level modulates.
+private func nexVoiceHUDTime(_ date: Date) -> Double {
+    date.timeIntervalSinceReferenceDate * 0.55
+}
+
 private func nexVoiceHUDLabPower(t: Double, level: Double) -> (power: Double, bloom: Double) {
-    let breathe = 0.5 + 0.5 * sin(t * 1.7)
-    let power = 0.40 + min(1, max(0, level)) * 0.55 + breathe * 0.05
+    let breathe = 0.5 + 0.5 * sin(t * 0.9)
+    let power = 0.16 + min(1, max(0, level)) * 0.80 + breathe * 0.04
     return (power, 0.92 + power * 0.18)
 }
 
@@ -1190,7 +1197,7 @@ private struct CometTrail: View {
 
     var body: some View {
         TimelineView(.animation(minimumInterval: 0.03)) { context in
-            let t = context.date.timeIntervalSinceReferenceDate
+            let t = nexVoiceHUDTime(context.date)
             let voiceLevel = levels.last ?? 0
             let (power, bloom) = nexVoiceHUDLabPower(t: t, level: voiceLevel)
 
@@ -1288,7 +1295,7 @@ private struct Helix: View {
 
     var body: some View {
         TimelineView(.animation(minimumInterval: 0.03)) { context in
-            let t = context.date.timeIntervalSinceReferenceDate
+            let t = nexVoiceHUDTime(context.date)
             let voiceLevel = levels.last ?? 0
             let (power, bloom) = nexVoiceHUDLabPower(t: t, level: voiceLevel)
 
@@ -1396,7 +1403,7 @@ private struct Mercury: View {
 
     var body: some View {
         TimelineView(.animation(minimumInterval: 0.03)) { context in
-            let t = context.date.timeIntervalSinceReferenceDate
+            let t = nexVoiceHUDTime(context.date)
             let voiceLevel = levels.last ?? 0
             let (power, bloom) = nexVoiceHUDLabPower(t: t, level: voiceLevel)
 
@@ -1504,7 +1511,7 @@ private struct EKG: View {
 
     var body: some View {
         TimelineView(.animation(minimumInterval: 0.03)) { context in
-            let t = context.date.timeIntervalSinceReferenceDate
+            let t = nexVoiceHUDTime(context.date)
             let voiceLevel = levels.last ?? 0
             let (power, bloom) = nexVoiceHUDLabPower(t: t, level: voiceLevel)
 
@@ -1622,7 +1629,7 @@ private struct MeteorShower: View {
 
     var body: some View {
         TimelineView(.animation(minimumInterval: 0.03)) { context in
-            let t = context.date.timeIntervalSinceReferenceDate
+            let t = nexVoiceHUDTime(context.date)
             let voiceLevel = levels.last ?? 0
             let (power, bloom) = nexVoiceHUDLabPower(t: t, level: voiceLevel)
 
@@ -1720,7 +1727,7 @@ private struct Plasma: View {
 
     var body: some View {
         TimelineView(.animation(minimumInterval: 0.03)) { context in
-            let t = context.date.timeIntervalSinceReferenceDate
+            let t = nexVoiceHUDTime(context.date)
             let voiceLevel = levels.last ?? 0
             let (power, bloom) = nexVoiceHUDLabPower(t: t, level: voiceLevel)
 
@@ -1829,7 +1836,7 @@ private struct Silk: View {
 
     var body: some View {
         TimelineView(.animation(minimumInterval: 0.03)) { context in
-            let t = context.date.timeIntervalSinceReferenceDate
+            let t = nexVoiceHUDTime(context.date)
             let voiceLevel = levels.last ?? 0
             let (power, bloom) = nexVoiceHUDLabPower(t: t, level: voiceLevel)
 
@@ -1900,7 +1907,7 @@ private struct Cascade: View {
 
     var body: some View {
         TimelineView(.animation(minimumInterval: 0.03)) { context in
-            let t = context.date.timeIntervalSinceReferenceDate
+            let t = nexVoiceHUDTime(context.date)
             let voiceLevel = levels.last ?? 0
             let (power, bloom) = nexVoiceHUDLabPower(t: t, level: voiceLevel)
 
@@ -1975,7 +1982,7 @@ private struct Eclipse: View {
 
     var body: some View {
         TimelineView(.animation(minimumInterval: 0.03)) { context in
-            let t = context.date.timeIntervalSinceReferenceDate
+            let t = nexVoiceHUDTime(context.date)
             let voiceLevel = levels.last ?? 0
             let (power, bloom) = nexVoiceHUDLabPower(t: t, level: voiceLevel)
 
