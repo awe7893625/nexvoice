@@ -15,21 +15,14 @@ enum HUDStyle: String, CaseIterable, Codable, Sendable {
     case glass
     case ink
     case aurora
-    case mono
     case siri
-    case quantum
-    case ripple
     case spectrum
-    case amber
-    case sketch
-    case incense
-    case dots
     case floatVoice
     case prismCore
-    case pulseField
-    case stardust
-    case frost
     case ember
+    case comet
+    case helix
+    case mercury
 
     var displayName: String {
         switch self {
@@ -37,21 +30,14 @@ enum HUDStyle: String, CaseIterable, Codable, Sendable {
         case .glass: "琉璃"
         case .ink: "墨韻"
         case .aurora: "極光"
-        case .mono: "羽量"
         case .siri: "光球"
-        case .quantum: "量子"
-        case .ripple: "漣漪"
         case .spectrum: "頻譜"
-        case .amber: "暖香"
-        case .sketch: "素描"
-        case .incense: "燼香"
-        case .dots: "圓點"
         case .floatVoice: "浮聲"
         case .prismCore: "虹核"
-        case .pulseField: "脈界"
-        case .stardust: "星塵"
-        case .frost: "霜息"
         case .ember: "赤霞"
+        case .comet: "彗尾"
+        case .helix: "雙螺旋"
+        case .mercury: "水銀"
         }
     }
 }
@@ -153,11 +139,30 @@ struct ProductPreferences: Codable, Equatable, Sendable {
         interactionSounds = try values.decodeIfPresent(Bool.self, forKey: .interactionSounds) ?? true
         muteOtherAudio = try values.decodeIfPresent(Bool.self, forKey: .muteOtherAudio) ?? true
         showDockIcon = try values.decodeIfPresent(Bool.self, forKey: .showDockIcon) ?? true
-        hudStyle = try values.decodeIfPresent(HUDStyle.self, forKey: .hudStyle) ?? .glass
-        hudChrome = try values.decodeIfPresent(HUDChrome.self, forKey: .hudChrome) ?? .borderless
+        // Decode as raw String first so a stale rawValue from a retired case
+        // (e.g. a HUDStyle that no longer exists) falls back to the default
+        // instead of throwing and zeroing out every other preference.
+        if let rawHudStyle = try values.decodeIfPresent(String.self, forKey: .hudStyle) {
+            hudStyle = HUDStyle(rawValue: rawHudStyle) ?? .glassBars
+        } else {
+            hudStyle = .glassBars
+        }
+        if let rawHudChrome = try values.decodeIfPresent(String.self, forKey: .hudChrome) {
+            hudChrome = HUDChrome(rawValue: rawHudChrome) ?? .borderless
+        } else {
+            hudChrome = .borderless
+        }
         liveCaptionsEnabled = try values.decodeIfPresent(Bool.self, forKey: .liveCaptionsEnabled) ?? true
-        subtitleStyle = try values.decodeIfPresent(SubtitleStyle.self, forKey: .subtitleStyle) ?? .bubble
-        appTheme = try values.decodeIfPresent(AppTheme.self, forKey: .appTheme) ?? .pristine
+        if let rawSubtitleStyle = try values.decodeIfPresent(String.self, forKey: .subtitleStyle) {
+            subtitleStyle = SubtitleStyle(rawValue: rawSubtitleStyle) ?? .bubble
+        } else {
+            subtitleStyle = .bubble
+        }
+        if let rawAppTheme = try values.decodeIfPresent(String.self, forKey: .appTheme) {
+            appTheme = AppTheme(rawValue: rawAppTheme) ?? .pristine
+        } else {
+            appTheme = .pristine
+        }
     }
 }
 
