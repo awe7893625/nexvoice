@@ -294,4 +294,25 @@ final class LocalTranscriptPostprocessorTests: XCTestCase {
 
         XCTAssertLessThan(elapsed, 3.0, "worst-case vocabulary preview took \(elapsed)s")
     }
+
+    func testClausalDunhaoIsDemotedToComma() {
+        XCTAssertEqual(
+            LocalTranscriptPostprocessor.process("我看了整份報表、然後把部署流程重新跑了一遍", vocabulary: []),
+            "我看了整份報表，然後把部署流程重新跑了一遍。"
+        )
+    }
+
+    func testShortListDunhaoIsPreserved() {
+        XCTAssertEqual(
+            LocalTranscriptPostprocessor.process("我買了蘋果、香蕉、鳳梨", vocabulary: []),
+            "我買了蘋果、香蕉、鳳梨。"
+        )
+    }
+
+    func testAsciiProductListDunhaoIsPreserved() {
+        XCTAssertEqual(
+            LocalTranscriptPostprocessor.process("NexVoice、NexPilot 都要更新", vocabulary: []),
+            "NexVoice、NexPilot 都要更新。"
+        )
+    }
 }

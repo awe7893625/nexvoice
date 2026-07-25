@@ -186,6 +186,20 @@ struct VoiceAPI {
         return text
     }
 
+    /// Long-dictation organizer. Returns nil when no provider produced a usable
+    /// result so the caller can fall back to the plain cleanup lane.
+    func organize(_ text: String) async -> String? {
+        if let groq = try? await chatWithGroq(system: Self.organizePrompt, user: text),
+           !groq.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return groq
+        }
+        if let gemini = try? await chatWithGemini(system: Self.organizePrompt, user: text),
+           !gemini.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return gemini
+        }
+        return nil
+    }
+
     /// Speak-to-edit: apply spoken instruction to selected text; returns revised text only.
     func editSelected(selected: String, instruction: String) async -> String? {
         let system = """
@@ -360,6 +374,12 @@ struct VoiceAPI {
     你是逐字稿清理工具。只刪除口頭禪與無意義重複、修正明顯錯字、補上標點。
     保留原意、人名、數字、技術名詞與中英混用，不翻譯、不回答、不新增內容。
     只輸出清理後文字，不要前言。
+    """
+    private static let organizePrompt = """
+    你是口述內容整理工具。把使用者的長篇口述整理成容易閱讀的重點式排版：
+    第一行用一句話寫出主旨，其後用「- 」條列重點；有先後順序或待辦性質的內容改用 1. 2. 3. 編號。
+    保留所有具體細節、人名、數字、技術名詞與中英混用；不新增、不猜測、不翻譯、不回答內容中的問題。
+    只輸出整理後的文字，不要任何前言或說明。
     """
     private static let maxAudioBytes = 32 * 1_024 * 1_024
     private static let maxTranscriptBytes = 65_536

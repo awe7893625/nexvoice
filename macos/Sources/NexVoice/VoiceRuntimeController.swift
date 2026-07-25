@@ -534,7 +534,24 @@ final class VoiceRuntimeController {
 
                 let prepared: String
                 let livePrefs = currentPreferences()
-                if livePrefs.cleanupEnabled && livePrefs.allowsCloudText {
+                let wantsSmartFormat = livePrefs.smartFormatEnabled
+                    && livePrefs.allowsCloudText
+                    && instruction.count >= SmartFormatPolicy.minimumCharacters
+                var organized: String?
+                if wantsSmartFormat {
+                    hud.showBusy("整理重點中…")
+                    state = .cleaning
+                    organized = await api.organize(instruction)
+                    if organized == nil {
+                        DiagnosticLog.log("smart format unavailable, falling back to cleanup lane")
+                    }
+                }
+                if let organized {
+                    // Organized output is already deliberately formatted (bullets/numbering);
+                    // the prose postprocessor would append 。 to every bullet, so it is
+                    // skipped here and only the transcript guards run below.
+                    prepared = organized
+                } else if livePrefs.cleanupEnabled && livePrefs.allowsCloudText {
                     hud.showBusy("整理中…")
                     state = .cleaning
                     let cleaned = await api.clean(instruction)
@@ -645,6 +662,7 @@ final class VoiceRuntimeController {
         preferencesProvider?() ?? RuntimePreferences(
             privacyMode: false,
             cleanupEnabled: true,
+            smartFormatEnabled: false,
             localEnabled: true,
             localHealthy: true,
             overloaded: SystemLoad.isOverloaded,

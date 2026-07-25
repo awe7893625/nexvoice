@@ -3,6 +3,7 @@ import Foundation
 struct RuntimePreferences: Equatable {
     var privacyMode: Bool
     var cleanupEnabled: Bool
+    var smartFormatEnabled: Bool
     var localEnabled: Bool
     var localHealthy: Bool
     var overloaded: Bool
@@ -28,4 +29,10 @@ struct RuntimePreferences: Equatable {
             privacyMode: privacyMode
         )
     }
+}
+
+/// Long-dictation auto-organize: only kicks in past this length so short
+/// utterances paste verbatim.
+enum SmartFormatPolicy {
+    static let minimumCharacters = 200
 }

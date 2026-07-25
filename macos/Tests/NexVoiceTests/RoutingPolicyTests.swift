@@ -45,6 +45,7 @@ final class RoutingPolicyTests: XCTestCase {
         let preferences = RuntimePreferences(
             privacyMode: false,
             cleanupEnabled: false,
+            smartFormatEnabled: false,
             localEnabled: true,
             localHealthy: true,
             overloaded: false,
@@ -63,6 +64,7 @@ final class RoutingPolicyTests: XCTestCase {
         let preferences = RuntimePreferences(
             privacyMode: true,
             cleanupEnabled: true,
+            smartFormatEnabled: false,
             localEnabled: true,
             localHealthy: false,
             overloaded: false,
@@ -81,6 +83,7 @@ final class RoutingPolicyTests: XCTestCase {
         let preferences = RuntimePreferences(
             privacyMode: false,
             cleanupEnabled: true,
+            smartFormatEnabled: false,
             localEnabled: true,
             localHealthy: true,
             overloaded: false,

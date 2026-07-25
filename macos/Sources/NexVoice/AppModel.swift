@@ -14,6 +14,9 @@ final class AppModel: ObservableObject {
     @Published var cleanupEnabled: Bool {
         didSet { defaults.set(cleanupEnabled, forKey: Keys.cleanupEnabled) }
     }
+    @Published var smartFormatEnabled: Bool {
+        didSet { defaults.set(smartFormatEnabled, forKey: Keys.smartFormatEnabled) }
+    }
     @Published var cloudFallbackEnabled: Bool {
         didSet { defaults.set(cloudFallbackEnabled, forKey: Keys.cloudFallbackEnabled) }
     }
@@ -80,6 +83,7 @@ final class AppModel: ObservableObject {
         static let enabled = "nexvoice.native.enabled"
         static let privacyMode = "nexvoice.native.privacyMode"
         static let cleanupEnabled = "nexvoice.native.cleanupEnabled"
+        static let smartFormatEnabled = "nexvoice.native.smartFormatEnabled"
         static let cloudFallbackEnabled = "nexvoice.native.cloudFallbackEnabled"
         static let zeroCostMode = "nexvoice.native.zeroCostMode"
         static let openAtLogin = "nexvoice.native.openAtLogin"
@@ -115,11 +119,13 @@ final class AppModel: ObservableObject {
         if defaults.object(forKey: Keys.zeroCostMode) == nil {
             self.zeroCostMode = true
             self.cleanupEnabled = false
+            self.smartFormatEnabled = false
             self.cloudFallbackEnabled = false
         } else {
             let zeroCostMode = defaults.bool(forKey: Keys.zeroCostMode)
             self.zeroCostMode = zeroCostMode
             self.cleanupEnabled = zeroCostMode ? false : defaults.bool(forKey: Keys.cleanupEnabled)
+            self.smartFormatEnabled = zeroCostMode ? false : defaults.bool(forKey: Keys.smartFormatEnabled)
             self.cloudFallbackEnabled = zeroCostMode
                 ? false
                 : defaults.bool(forKey: Keys.cloudFallbackEnabled)
@@ -147,6 +153,7 @@ final class AppModel: ObservableObject {
                 return RuntimePreferences(
                     privacyMode: false,
                     cleanupEnabled: true,
+                    smartFormatEnabled: false,
                     localEnabled: true,
                     localHealthy: false,
                     overloaded: SystemLoad.isOverloaded,
@@ -277,6 +284,7 @@ final class AppModel: ObservableObject {
         RuntimePreferences(
             privacyMode: privacyMode,
             cleanupEnabled: cleanupEnabled && !zeroCostMode,
+            smartFormatEnabled: smartFormatEnabled && !zeroCostMode,
             localEnabled: true,
             localHealthy: mlx.isHealthy,
             overloaded: SystemLoad.isOverloaded,

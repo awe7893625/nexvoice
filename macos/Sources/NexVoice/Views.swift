@@ -1044,6 +1044,15 @@ private struct SettingsPage: View {
                     .disabled(model.zeroCostMode || model.privacyMode)
                     Divider().overlay(NV.hairline)
                     toggleRow(
+                        title: "長內容自動整理重點",
+                        detail: model.zeroCostMode || model.privacyMode
+                            ? "本機／零費用模式下停用"
+                            : "口述超過約 200 字時自動整理成條列重點；短內容不受影響",
+                        isOn: $model.smartFormatEnabled
+                    )
+                    .disabled(model.zeroCostMode || model.privacyMode)
+                    Divider().overlay(NV.hairline)
+                    toggleRow(
                         title: "登入時啟動",
                         detail: "放在選單列，不自動搶 Option",
                         isOn: Binding(
