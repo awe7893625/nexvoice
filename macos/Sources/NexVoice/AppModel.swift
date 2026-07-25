@@ -100,6 +100,11 @@ final class AppModel: ObservableObject {
     private let localRuntimeSupervisor = LocalRuntimeSupervisor()
     private var restoredRuntime = false
     private var runtimeOperationID = 0
+    /// Set when enable() failed transiently (busy Hammerspoon IPC, monitor
+    /// hiccup) while the persisted user intent stays "enabled" -- the monitor
+    /// loop retries the takeover instead of leaving the hotkey dead.
+    private var enableRetryPending = false
+    private var enableRetryTick = 0
 
     init(defaults: UserDefaults = .standard) {
         SecretStore.migrateLegacySecretsToKeychain()
@@ -366,6 +371,17 @@ final class AppModel: ObservableObject {
                 if self.isEnabled && !self.typelessRunning {
                     await self.localRuntimeSupervisor.startIfNeeded()
                 }
+                if self.enableRetryPending, !self.isEnabled, !self.typelessRunning,
+                   self.defaults.bool(forKey: Keys.enabled), self.permissionsReady {
+                    // Every 3rd tick (~15s) so a wedged Hammerspoon isn't hammered.
+                    self.enableRetryTick += 1
+                    if self.enableRetryTick % 3 == 1 {
+                        DiagnosticLog.log("auto-retrying hotkey takeover after transient enable failure")
+                        await self.setRuntimeEnabled(true)
+                    }
+                } else {
+                    self.enableRetryTick = 0
+                }
                 await self.refresh()
                 if self.typelessRunning, self.isEnabled {
                     let relinquished = await self.relinquishToTypeless(reason: "health-reconcile")
@@ -610,6 +626,7 @@ final class AppModel: ObservableObject {
                     return
                 }
                 isEnabled = true
+                enableRetryPending = false
                 currentHotkeyOwner = .native
                 defaults.set(true, forKey: Keys.enabled)
                 // Global Option monitor silently receives nothing without Accessibility —
@@ -627,11 +644,28 @@ final class AppModel: ObservableObject {
                 }
                 isEnabled = false
                 currentHotkeyOwner = LegacyBridge.loadOwner() ?? currentHotkeyOwner
-                defaults.set(false, forKey: Keys.enabled)
-                notice = error.localizedDescription
-                DiagnosticLog.log("setRuntimeEnabled(true): FAILED — \(error.localizedDescription)")
+                // A busy Hammerspoon IPC channel or a monitor hiccup is
+                // transient: keep the persisted user intent and let the
+                // monitor loop retry, instead of permanently disabling the
+                // hotkey until a manual re-enable. Permission failures stay
+                // persisted-off: retrying can't fix those.
+                let transient: Bool = switch error {
+                case VoiceRuntimeError.legacyTriggerStillActive,
+                     VoiceRuntimeError.monitorInstallationFailed: true
+                default: false
+                }
+                if transient {
+                    enableRetryPending = true
+                    defaults.set(true, forKey: Keys.enabled)
+                    notice = "\(error.localizedDescription)；稍後會自動重試接管。"
+                } else {
+                    defaults.set(false, forKey: Keys.enabled)
+                    notice = error.localizedDescription
+                }
+                DiagnosticLog.log("setRuntimeEnabled(true): FAILED — \(error.localizedDescription)\(transient ? " (will auto-retry)" : "")")
             }
         } else {
+            enableRetryPending = false
             let result = await runtime.disable(destination: .legacy)
             guard operationID == runtimeOperationID else {
                 DiagnosticLog.log("setRuntimeEnabled(false): stale operation ignored")
