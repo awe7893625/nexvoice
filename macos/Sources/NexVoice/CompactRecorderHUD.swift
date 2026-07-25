@@ -471,18 +471,20 @@ struct HUDVisualization: View {
             switch style {
             case .glassBars:
                 GlassBars(levels: levels)
+            case .bloomPills:
+                BloomPills(levels: levels)
+            case .plasmaColumns:
+                PlasmaColumns(levels: levels)
+            case .liquidPulse:
+                LiquidPulse(levels: levels)
+            case .auraRibbon:
+                GlowRibbon(levels: levels)
             case .glass:
                 WaterWave(levels: levels)
-            case .ink:
-                InkStroke(levels: levels)
             case .aurora:
                 AuroraRibbon(levels: levels)
             case .siri:
                 SiriOrb(level: levels.last ?? 0)
-            case .spectrum:
-                PrecisionWaveform(levels: levels)
-            case .floatVoice:
-                FloatVoice(levels: levels)
             case .prismCore:
                 PrismCore(levels: levels)
             case .ember:
@@ -493,81 +495,13 @@ struct HUDVisualization: View {
                 Helix(levels: levels)
             case .mercury:
                 Mercury(levels: levels)
-            case .ekg:
-                EKG(levels: levels)
-            case .meteor:
-                MeteorShower(levels: levels)
             case .plasma:
                 Plasma(levels: levels)
-            case .silk:
-                Silk(levels: levels)
-            case .cascade:
-                Cascade(levels: levels)
             case .eclipse:
                 Eclipse(levels: levels)
             }
         }
         .frame(width: 64, height: 22)
-    }
-}
-
-/// “墨韻” (ink) —— 宣紙邊上呼吸的一筆墨：暖米紙半透明卡、單筆變寬墨帶。
-private struct InkStroke: View {
-    @Environment(\.hudPhase) private var hudPhase
-    let levels: [Double]
-
-    var body: some View {
-        let t = hudPhase
-        let maxLevel = levels.max() ?? 0
-        let baseThickness = 2.2
-        let thicknessVariation = 0.62
-        
-        Canvas { canvas, size in
-            let centerY = size.height / 2
-            let step: CGFloat = 8
-            var prevPoint: CGPoint?
-            
-            for x in stride(from: 0, through: size.width, by: step) {
-                let u = x / size.width
-                let envelope = sin(u * .pi)
-                let drift = maxLevel * 0.55 * envelope * sin(4.2 * u * .pi * 2 + t * 0.9)
-                let thickness = baseThickness + maxLevel * thicknessVariation * envelope * (
-                    0.55 + 0.45 * sin(6.8 * u * .pi * 2 - t * 1.25)
-                )
-                
-                let y = centerY + drift
-                
-                if let prevPoint {
-                    canvas.stroke(
-                        Path { path in
-                            path.move(to: prevPoint)
-                            path.addLine(to: CGPoint(x: x, y: y))
-                        },
-                        with: .color(Color(red: 0.96, green: 0.93, blue: 0.86).opacity(0.95)),
-                        style: StrokeStyle(lineWidth: thickness, lineCap: .round)
-                    )
-                }
-                
-                prevPoint = CGPoint(x: x, y: y)
-            }
-            
-            // Dry-brush echo
-            if let prevPoint {
-                canvas.stroke(
-                    Path { path in
-                        path.move(to: prevPoint)
-                        for x in stride(from: size.width, through: 0, by: -step) {
-                            let u = x / size.width
-                            let envelope = sin(u * .pi)
-                            let y = centerY + maxLevel * 0.55 * envelope * sin(4.2 * u * .pi * 2 + t * 0.9) - (3.5 + maxLevel * 0.22 * envelope)
-                            path.addLine(to: CGPoint(x: x, y: y))
-                        }
-                    },
-                    with: .color(Color(red: 0.96, green: 0.93, blue: 0.86).opacity(0.28)),
-                    style: StrokeStyle(lineWidth: 1, lineCap: .round)
-                )
-            }
-        }
     }
 }
 
@@ -622,37 +556,6 @@ private struct AuroraRibbon: View {
                     ),
                     style: StrokeStyle(lineWidth: 2.2 - Double(layerIndex) * 0.4, lineCap: .round)
                 )
-            }
-        }
-    }
-}
-
-/// "精準頻譜" (Precision Waveform): seven bars with a per-bar staggered
-/// bounce, green/purple jewel tones, height also driven by real voice level.
-private struct PrecisionWaveform: View {
-    @Environment(\.hudPhase) private var hudPhase
-    let levels: [Double]
-
-    private static let colors: [Color] = [
-        Color(red: 0.447, green: 0.878, blue: 0.643), Color(red: 0.447, green: 0.878, blue: 0.643), Color(red: 0.447, green: 0.878, blue: 0.643),
-        Color(red: 0.659, green: 0.510, blue: 0.878), Color(red: 0.659, green: 0.510, blue: 0.878),
-        Color(red: 0.447, green: 0.878, blue: 0.643), Color(red: 0.447, green: 0.878, blue: 0.643),
-    ]
-    private static let baseHeights: [Double] = [0.2, 0.5, 0.8, 1.0, 0.8, 0.5, 0.2]
-    private static let phaseOffsets: [Double] = [-0.4, -0.2, 0, -0.3, -0.1, -0.5, -0.2]
-
-    var body: some View {
-        let t = hudPhase
-        let level = levels.last ?? 0
-        HStack(alignment: .center, spacing: 3) {
-            ForEach(0..<7, id: \.self) { index in
-                let bounce = 0.5 + 0.5 * sin((t + Self.phaseOffsets[index]) * 6.3)
-                let energy = 0.3 + 0.7 * bounce
-                let magnitude = Self.baseHeights[index] * (0.3 + level * 0.9) * energy
-                Capsule()
-                    .fill(Self.colors[index])
-                    .frame(width: 2.4, height: max(2, 18 * magnitude))
-                    .shadow(color: Self.colors[index].opacity(0.5), radius: 2)
             }
         }
     }
@@ -970,22 +873,6 @@ private struct SpatialBlurSubtitle: View {
     }
 }
 
-private struct WaveformBars: View {
-    let levels: [Double]
-
-    var body: some View {
-        HStack(alignment: .center, spacing: 2) {
-            ForEach(Array(levels.enumerated()), id: \.offset) { index, level in
-                let emphasis = 0.82 + 0.18 * sin(Double(index) * 0.8)
-                Capsule()
-                    .fill(Color.white.opacity(0.95))
-                    .frame(width: 2, height: 3.5 + 18 * min(1, level * emphasis))
-                    .animation(.linear(duration: 0.075), value: level)
-            }
-        }
-    }
-}
-
 /// Deterministic hash used by the ports below (赤霞) -- mirrors the
 /// ChatGPT HUD-pack mockup's `seeded(n)` so particle/crystal positions are
 /// stable across frames instead of flickering like Double.random would.
@@ -1014,54 +901,6 @@ private func nexVoiceSmoothWavePath(size: CGSize, t: Double, energy: Double, amp
         if i == 0 { path.move(to: point) } else { path.addLine(to: point) }
     }
     return path
-}
-
-/// "浮聲" (Float Voice) -- ultra-thin borderless float: a soft white glow, a
-/// bright main wave with a fainter blue secondary wave riding under it, and
-/// three small pulsing dots along the left edge.
-private struct FloatVoice: View {
-    @Environment(\.hudPhase) private var hudPhase
-    let levels: [Double]
-
-    var body: some View {
-        let t = hudPhase
-        let voiceLevel = levels.last ?? 0
-        let synthFloor = 0.05 + 0.05 * abs(sin(t * 0.8))
-        let energy = max(voiceLevel, synthFloor)
-
-        Canvas { canvas, size in
-            canvas.fill(
-                Path(CGRect(origin: .zero, size: size)),
-                with: .radialGradient(
-                    Gradient(colors: [.white.opacity(0.06 + energy * 0.07), .white.opacity(0)]),
-                    center: CGPoint(x: size.width / 2, y: size.height / 2),
-                    startRadius: 0,
-                    endRadius: size.width * 0.5
-                )
-            )
-
-            canvas.stroke(
-                nexVoiceSmoothWavePath(size: size, t: t, energy: energy, amplitude: size.height * 0.4, frequency: 3.2, phase: 0.6),
-                with: .color(.white.opacity(0.96)),
-                style: StrokeStyle(lineWidth: 1.8, lineCap: .round, lineJoin: .round)
-            )
-            canvas.stroke(
-                nexVoiceSmoothWavePath(size: size, t: t + 0.12, energy: energy * 0.82, amplitude: size.height * 0.33, frequency: 4.6, phase: 2.1),
-                with: .color(Color(red: 0.62, green: 0.78, blue: 1.0).opacity(0.5)),
-                style: StrokeStyle(lineWidth: 1.1, lineCap: .round, lineJoin: .round)
-            )
-
-            for i in 0..<3 {
-                let x = size.width * (0.12 + Double(i) * 0.032)
-                let pulse = 0.55 + 0.45 * sin(t * 2.3 + Double(i))
-                let r: CGFloat = 1.3 + 0.7 * pulse
-                canvas.fill(
-                    Path(ellipseIn: CGRect(x: x - r, y: size.height / 2 - r, width: r * 2, height: r * 2)),
-                    with: .color(.white.opacity(0.7 + 0.2 * pulse))
-                )
-            }
-        }
-    }
 }
 
 /// "虹核" (Prism Core) -- rainbow-tinted glow blobs orbiting additively
@@ -1566,220 +1405,6 @@ private struct Mercury: View {
     }
 }
 
-/// "心電" (EKG) -- ported from the NexVoice HUD Lab mockup's 心電 variant: a
-/// faint breathing baseline sine with a bright Gaussian-enveloped pulse
-/// packet that scans left-to-right, a fading trailing streak behind the
-/// pulse head, and a bright bloom dot riding at the head -- mirrors the
-/// halo+gradient double-stroke bloom convention used by CometTrail/Helix/Mercury.
-private struct EKG: View {
-    @Environment(\.hudPhase) private var hudPhase
-    let levels: [Double]
-
-    var body: some View {
-        let t = hudPhase
-        let voiceLevel = levels.last ?? 0
-        let (power, bloom) = nexVoiceHUDLabPower(t: t, level: voiceLevel)
-
-        Canvas { canvas, size in
-            let w = Double(size.width)
-            let h = Double(size.height)
-            let cy = h / 2
-            let amp = 4.5 + power * 6.0
-            let rate = 0.85 + power * 0.35
-            let scanX = (t * 24 * rate).truncatingRemainder(dividingBy: w)
-            let trail = 9 + power * 4
-
-            func baseline(_ x: Double) -> Double {
-                cy + sin(x * 0.16 + t * 1.4 * rate) * 1.2
-            }
-            func packet(_ x: Double, _ center: Double) -> Double {
-                let d = x - center
-                let envelope = exp(-(d * d) / (26 + power * 30))
-                return envelope * (
-                    sin(d * 0.9) * amp * 0.32 +
-                    sin(d * 1.7) * amp * 0.58 +
-                    sin(d * 0.34) * amp * 0.2
-                )
-            }
-            func waveform(_ x: Double) -> Double {
-                // Two relay pulse packets so the trace never reads as an
-                // empty flat line between beats.
-                let second = (scanX + w / 2).truncatingRemainder(dividingBy: w)
-                return baseline(x) + packet(x, scanX) + packet(x, second) * 0.7
-            }
-
-            var basePoints: [CGPoint] = []
-            var x = 0.0
-            while x <= w { basePoints.append(CGPoint(x: x, y: baseline(x))); x += 1 }
-            var basePath = Path()
-            basePath.addLines(basePoints)
-            canvas.stroke(
-                basePath,
-                with: .color(Color(red: 0.24, green: 0.80, blue: 1.0).opacity(0.30)),
-                style: StrokeStyle(lineWidth: 3.6 * bloom, lineCap: .round, lineJoin: .round)
-            )
-
-            var points: [CGPoint] = []
-            x = 0.0
-            while x <= w { points.append(CGPoint(x: x, y: waveform(x))); x += 0.6 }
-            var path = Path()
-            path.addLines(points)
-            canvas.stroke(
-                path,
-                with: .linearGradient(
-                    Gradient(colors: [
-                        Color(red: 0.31, green: 0.43, blue: 1.0).opacity(0.5),
-                        Color(red: 0.26, green: 0.84, blue: 1.0).opacity(0.94),
-                        Color(red: 0.88, green: 1.0, blue: 1.0).opacity(0.98),
-                        Color(red: 0.50, green: 0.43, blue: 1.0).opacity(0.55),
-                    ]),
-                    startPoint: CGPoint(x: 0, y: cy),
-                    endPoint: CGPoint(x: w, y: cy)
-                ),
-                style: StrokeStyle(lineWidth: 1.3 + power * 0.5, lineCap: .round, lineJoin: .round)
-            )
-
-            var trailPoints: [CGPoint] = []
-            var tx = max(0, scanX - trail)
-            while tx <= scanX { trailPoints.append(CGPoint(x: tx, y: waveform(tx))); tx += 0.5 }
-            var trailPath = Path()
-            trailPath.addLines(trailPoints)
-            canvas.stroke(
-                trailPath,
-                with: .linearGradient(
-                    Gradient(colors: [
-                        Color(red: 0.26, green: 0.84, blue: 1.0).opacity(0),
-                        Color(red: 0.90, green: 1.0, blue: 1.0).opacity(0.9),
-                    ]),
-                    startPoint: CGPoint(x: scanX - trail, y: cy),
-                    endPoint: CGPoint(x: scanX, y: cy)
-                ),
-                style: StrokeStyle(lineWidth: 1.9 + power * 0.4, lineCap: .round, lineJoin: .round)
-            )
-
-            let hy = waveform(scanX)
-            let core = 1.6 + power * 0.7
-            canvas.fill(
-                Path(ellipseIn: CGRect(x: scanX - core * 2, y: hy - core * 2, width: core * 4, height: core * 4)),
-                with: .radialGradient(
-                    Gradient(colors: [
-                        .white,
-                        Color(red: 0.91, green: 1.0, blue: 1.0),
-                        Color(red: 0.42, green: 0.84, blue: 1.0).opacity(0),
-                    ]),
-                    center: CGPoint(x: scanX - 0.4, y: hy - 0.4),
-                    startRadius: 0,
-                    endRadius: core * 2
-                )
-            )
-            canvas.fill(
-                Path(ellipseIn: CGRect(x: scanX - core * 0.5, y: hy - core * 0.5, width: core, height: core)),
-                with: .color(.white.opacity(0.97))
-            )
-        }
-    }
-}
-
-/// "流星群" (Meteor Shower) -- ported from the NexVoice HUD Lab mockup's
-/// 流星群 variant: a shared undulating track band with three meteors
-/// travelling along it in a fixed relay (evenly spaced, deterministic
-/// per-meteor phase offsets -- no Double.random), each dragging a short
-/// segmented fading tail and a bright bloom head. Segment count reduced
-/// from the mockup's 8 to 6 (perf, matches CometTrail's own 9->6 reduction)
-/// with larger radius/alpha to keep the density feel.
-private struct MeteorShower: View {
-    @Environment(\.hudPhase) private var hudPhase
-    let levels: [Double]
-    private static let count = 3
-
-    var body: some View {
-        let t = hudPhase
-        let voiceLevel = levels.last ?? 0
-        let (power, bloom) = nexVoiceHUDLabPower(t: t, level: voiceLevel)
-
-        Canvas { canvas, size in
-            let w = Double(size.width)
-            let h = Double(size.height)
-            let cy = h / 2
-            let amp = h * (0.10 + power * 0.16)
-            let rate = 0.85 + power * 0.35
-
-            func trackY(_ x: Double, phase: Double = 0) -> Double {
-                cy + sin(x * 0.20 + t * 1.6 * rate + phase) * amp
-                    + sin(x * 0.07 - t * 0.8 * rate) * amp * 0.22
-            }
-
-            var bandPoints: [CGPoint] = []
-            var x = 0.0
-            while x <= w { bandPoints.append(CGPoint(x: x, y: trackY(x))); x += 1 }
-            var band = Path()
-            band.addLines(bandPoints)
-
-            canvas.stroke(
-                band,
-                with: .color(Color(red: 0.33, green: 0.84, blue: 1.0).opacity(0.18)),
-                style: StrokeStyle(lineWidth: 4.4 * bloom, lineCap: .round, lineJoin: .round)
-            )
-            canvas.stroke(
-                band,
-                with: .linearGradient(
-                    Gradient(colors: [
-                        Color(red: 0.36, green: 0.40, blue: 1.0).opacity(0.42),
-                        Color(red: 0.34, green: 0.90, blue: 1.0).opacity(0.9),
-                        Color(red: 0.55, green: 0.47, blue: 1.0).opacity(0.38),
-                    ]),
-                    startPoint: CGPoint(x: 0, y: cy),
-                    endPoint: CGPoint(x: w, y: cy)
-                ),
-                style: StrokeStyle(lineWidth: 1.0, lineCap: .round, lineJoin: .round)
-            )
-
-            for i in 0..<Self.count {
-                let spacing = w / Double(Self.count)
-                let progress = (t * (15 + power * 20) * rate + Double(i) * spacing)
-                    .truncatingRemainder(dividingBy: w)
-                let hx = progress
-                let hy = trackY(hx, phase: Double(i) * 0.12)
-                let tailLength = 9.0 + power * 6
-                let segments = 6
-
-                for j in stride(from: segments, through: 1, by: -1) {
-                    let d = Double(j) * (tailLength / Double(segments))
-                    let tx = max(0, min(w, hx - d))
-                    let ty = trackY(tx, phase: Double(i) * 0.12)
-                    let a = pow(1 - Double(j) / Double(segments + 1), 1.8)
-                    let r = 0.45 + Double(segments - j) * 0.1
-                    let color = i % 2 == 0
-                        ? Color(red: 0.38, green: 0.89, blue: 1.0)
-                        : Color(red: 0.55, green: 0.47, blue: 1.0)
-                    canvas.fill(
-                        Path(ellipseIn: CGRect(x: tx - r, y: ty - r, width: r * 2, height: r * 2)),
-                        with: .color(color.opacity(a * 0.78))
-                    )
-                }
-
-                let radius = 1.3 + power * 0.7
-                let headColor = i % 2 == 0
-                    ? Color(red: 0.47, green: 0.93, blue: 1.0)
-                    : Color(red: 0.66, green: 0.58, blue: 1.0)
-                canvas.fill(
-                    Path(ellipseIn: CGRect(x: hx - radius * 2, y: hy - radius * 2, width: radius * 4, height: radius * 4)),
-                    with: .radialGradient(
-                        Gradient(colors: [.white, Color(red: 0.93, green: 1.0, blue: 1.0), headColor.opacity(0)]),
-                        center: CGPoint(x: hx - 0.4, y: hy - 0.4),
-                        startRadius: 0,
-                        endRadius: radius * 2
-                    )
-                )
-                canvas.fill(
-                    Path(ellipseIn: CGRect(x: hx - radius * 0.5, y: hy - radius * 0.5, width: radius, height: radius)),
-                    with: .color(.white.opacity(0.95))
-                )
-            }
-        }
-    }
-}
-
 /// "電漿" (Plasma) -- ported from the NexVoice HUD Lab mockup's 電漿
 /// variant: a dual-harmonic arcing wave (envelope-tapered to flat at both
 /// ends) with a fainter secondary counter-phased arc riding underneath, a
@@ -1886,148 +1511,6 @@ private struct Plasma: View {
     }
 }
 
-/// "絲綢" (Silk) -- ported from the NexVoice HUD Lab p3 mockup's 絲綢
-/// variant: two flowing ribbon strands (cream main + warm-gold secondary),
-/// each an amplitude-modulated sine riding a slower cosine envelope,
-/// through the halo+gradient double-stroke bloom convention shared with
-/// CometTrail/Helix/Mercury. The envelope spans the middle ~84% of the
-/// width (not tapered fully to the edges) so idle silence still reads as a
-/// wide, present ribbon rather than a pinched flat line.
-private struct Silk: View {
-    @Environment(\.hudPhase) private var hudPhase
-    let levels: [Double]
-
-    var body: some View {
-        let t = hudPhase
-        let voiceLevel = levels.last ?? 0
-        let (power, bloom) = nexVoiceHUDLabPower(t: t, level: voiceLevel)
-
-        Canvas { canvas, size in
-            let w = Double(size.width)
-            let h = Double(size.height)
-            let cy = h / 2
-            let start = w * 0.08
-            let span = w * 0.84
-            let amp = h * (0.16 + power * 0.30)
-            let rate = 0.85 + power * 0.35
-
-            func strand(offset: Double) -> Path {
-                var points: [CGPoint] = []
-                var x = 0.0
-                while x <= w {
-                    let p = min(1, max(0, (x - start) / span))
-                    let envelope = sin(p * .pi)
-                    let kx = x * 0.11
-                    let y = cy + sin(kx + t * 2.1 * rate + offset) * amp * envelope
-                        * cos(t * 1.3 * rate + x * 0.025)
-                    points.append(CGPoint(x: x, y: y))
-                    x += 1
-                }
-                var path = Path()
-                path.addLines(points)
-                return path
-            }
-
-            let main = strand(offset: 0)
-            canvas.stroke(
-                main,
-                with: .color(Color(red: 0.97, green: 0.83, blue: 0.62).opacity(0.30)),
-                style: StrokeStyle(lineWidth: 5.4 * bloom, lineCap: .round, lineJoin: .round)
-            )
-            canvas.stroke(
-                main,
-                with: .color(Color(red: 1.0, green: 0.90, blue: 0.80).opacity(0.96)),
-                style: StrokeStyle(lineWidth: 2.0, lineCap: .round, lineJoin: .round)
-            )
-
-            let secondary = strand(offset: 1.5)
-            canvas.stroke(
-                secondary,
-                with: .color(Color(red: 0.82, green: 0.65, blue: 0.49).opacity(0.20)),
-                style: StrokeStyle(lineWidth: 3.6 * bloom, lineCap: .round, lineJoin: .round)
-            )
-            canvas.stroke(
-                secondary,
-                with: .color(Color(red: 0.89, green: 0.72, blue: 0.55).opacity(0.88)),
-                style: StrokeStyle(lineWidth: 1.3, lineCap: .round, lineJoin: .round)
-            )
-        }
-    }
-}
-
-/// "光瀑" (Cascade) -- ported from the NexVoice HUD Lab p3 mockup's 光瀑
-/// variant: a cyan/white light stream of particles advancing left-to-right
-/// in a fixed relay (deterministic per-particle size via nexVoiceSeeded, no
-/// Double.random) riding a glowing guide track that carries the
-/// halo+gradient bloom look shared with CometTrail/MeteorShower. Particle
-/// count reduced from the mockup's 12 to 9 (perf, matches CometTrail's own
-/// 9->6 reduction) with larger radius/alpha to keep the density feel.
-private struct Cascade: View {
-    @Environment(\.hudPhase) private var hudPhase
-    let levels: [Double]
-    private static let count = 9
-
-    var body: some View {
-        let t = hudPhase
-        let voiceLevel = levels.last ?? 0
-        let (power, bloom) = nexVoiceHUDLabPower(t: t, level: voiceLevel)
-
-        Canvas { canvas, size in
-            let w = Double(size.width)
-            let h = Double(size.height)
-            let cy = h / 2
-            let rate = 0.85 + power * 0.35
-            let heightAmp = h * (0.20 + power * 0.32)
-
-            func trackY(_ x: Double) -> Double {
-                let n = min(1, max(0, x / w))
-                let envelope = sin(n * .pi)
-                return cy + sin(x * 0.12 + t * 2.6 * rate) * heightAmp * envelope
-            }
-
-            var trackPoints: [CGPoint] = []
-            var x = 0.0
-            while x <= w { trackPoints.append(CGPoint(x: x, y: trackY(x))); x += 1 }
-            var track = Path()
-            track.addLines(trackPoints)
-
-            canvas.stroke(
-                track,
-                with: .color(Color(red: 0.29, green: 0.69, blue: 0.85).opacity(0.22)),
-                style: StrokeStyle(lineWidth: 4.8 * bloom, lineCap: .round, lineJoin: .round)
-            )
-            canvas.stroke(
-                track,
-                with: .color(Color(red: 0.55, green: 0.91, blue: 1.0).opacity(0.90)),
-                style: StrokeStyle(lineWidth: 1.4, lineCap: .round, lineJoin: .round)
-            )
-
-            let speed = w * (0.55 + power * 0.95)
-            let spacing = w * 1.15 / Double(Self.count)
-            for i in 0..<Self.count {
-                let xPos = (Double(i) * spacing + t * speed)
-                    .truncatingRemainder(dividingBy: w + spacing) - spacing * 0.5
-                guard xPos > -3 && xPos < w + 3 else { continue }
-                let clampedX = max(0, min(w, xPos))
-                let yPos = trackY(clampedX) + sin(xPos * 0.22 + t * 3.4 * rate + Double(i)) * heightAmp * 0.22
-                let r: CGFloat = 1.5 + CGFloat(nexVoiceSeeded(Double(i) * 5.6)) * 0.9
-                let color = i % 2 == 0
-                    ? Color(red: 0.55, green: 0.91, blue: 1.0)
-                    : Color.white
-                canvas.fill(
-                    Path(ellipseIn: CGRect(x: xPos - r, y: yPos - r, width: r * 2, height: r * 2)),
-                    with: .radialGradient(
-                        Gradient(colors: [.white, color, color.opacity(0)]),
-                        center: CGPoint(x: xPos, y: yPos),
-                        startRadius: 0,
-                        endRadius: r
-                    )
-                )
-            }
-        }
-    }
-}
-
 /// "日蝕" (Eclipse) -- reworked from the NexVoice HUD Lab p3 mockup's 日蝕
 /// variant for the 78x26 horizontal capsule: the mockup's centered circular
 /// corona is stretched into a wide horizontal composition (elliptical
@@ -2114,6 +1597,221 @@ private struct Eclipse: View {
                 with: .color(Color(red: 1.0, green: 0.71, blue: 0.51).opacity(0.96)),
                 style: StrokeStyle(lineWidth: 1.5)
             )
+        }
+    }
+}
+
+// MARK: - Design-lane ports (Gemini HUD gallery, 2026-07-25)
+//
+// Four variants designed against the voice-phase contract rather than adapted
+// to it afterwards: their draw functions take `(level, levelHistory, phase)`
+// and nothing else, so silence really is still. Geometry constants come from
+// the prototype's 156x52 canvas and are scaled by `plate`, which keeps them
+// faithful at the 64x22 plated size and at 2x in naked mode.
+
+/// Reference width of the prototype canvas these ports were drawn against.
+private let nexVoiceHUDReferenceWidth: Double = 156
+
+/// "膠囊光暈" -- seven wide round-capped pills with a bloom halo, the closest
+/// thing in the pack to the ChatGPT reference Rain approved, but with far
+/// fewer, fatter bars so it keeps its weight at HUD size.
+private struct BloomPills: View {
+    @Environment(\.hudPhase) private var hudPhase
+    let levels: [Double]
+
+    private static let barCount = 7
+
+    var body: some View {
+        Canvas { canvas, size in
+            let plate = Double(size.width) / nexVoiceHUDReferenceWidth
+            let level = levels.last ?? 0
+            let barWidth = 6.0 * plate
+            let spacing = 8.0 * plate
+            let centerY = Double(size.height) / 2
+            let span = Double(Self.barCount) * barWidth + Double(Self.barCount - 1) * spacing
+            let startX = (Double(size.width) - span) / 2
+            let minHeight = 6.0 * plate
+            let maxHeight = Double(size.height) * 0.75
+
+            var pills = Path()
+            for index in 0..<Self.barCount {
+                let mid = Double(Self.barCount - 1) / 2
+                let centerDist = abs(Double(index) - mid) / mid
+                let weight = cos(centerDist * .pi * 0.4)
+                let wave = sin(hudPhase * 2.5 + Double(index) * 0.75) * 0.3 + 0.7
+                let history = levels[index % levels.count]
+                let energy = level * 0.7 + history * 0.3
+                let height = max(minHeight, energy * maxHeight * weight * wave + minHeight)
+                let x = startX + Double(index) * (barWidth + spacing)
+                let rect = CGRect(x: x, y: centerY - height / 2, width: barWidth, height: height)
+                pills.addRoundedRect(in: rect, cornerSize: CGSize(width: barWidth / 2, height: barWidth / 2))
+            }
+
+            // Bloom first, as a blurred copy underneath the crisp pills.
+            canvas.drawLayer { layer in
+                layer.addFilter(.blur(radius: (2 + level * 5) * plate))
+                layer.fill(pills, with: .color(.white.opacity(0.25 + level * 0.55)))
+            }
+            canvas.fill(pills, with: .color(.white.opacity(0.85 + level * 0.15)))
+        }
+    }
+}
+
+/// "等離子柱" -- eleven slim columns under a Gaussian centre weight, each with
+/// a bright core fading at both ends, so the cluster reads as one lit object
+/// rather than a row of ticks.
+private struct PlasmaColumns: View {
+    @Environment(\.hudPhase) private var hudPhase
+    let levels: [Double]
+
+    private static let barCount = 11
+
+    var body: some View {
+        Canvas { canvas, size in
+            let plate = Double(size.width) / nexVoiceHUDReferenceWidth
+            let level = levels.last ?? 0
+            let barWidth = 4.0 * plate
+            let spacing = 6.0 * plate
+            let height = Double(size.height)
+            let centerY = height / 2
+            let span = Double(Self.barCount) * barWidth + Double(Self.barCount - 1) * spacing
+            let startX = (Double(size.width) - span) / 2
+            let core = Gradient(colors: [
+                .white.opacity(0.4),
+                .white.opacity(0.9 + level * 0.1),
+                .white.opacity(0.4),
+            ])
+
+            var glow = Path()
+            for index in 0..<Self.barCount {
+                let mid = Double(Self.barCount - 1) / 2
+                let centerDist = abs(Double(index) - mid) / mid
+                let weight = exp(-centerDist * centerDist * 2.5)
+                let wave = sin(hudPhase * 3.0 + Double(index) * 0.6) * 0.2 + 0.8
+                let history = levels[index % levels.count]
+                let energy = level * 0.8 + history * 0.2
+                let barHeight = energy * (height * 0.7) * weight * wave + 4 * plate
+                let x = startX + Double(index) * (barWidth + spacing)
+                let rect = CGRect(x: x, y: centerY - barHeight / 2, width: barWidth, height: barHeight)
+                var column = Path()
+                column.addRoundedRect(in: rect, cornerSize: CGSize(width: barWidth / 2, height: barWidth / 2))
+                glow.addPath(column)
+                canvas.fill(
+                    column,
+                    with: .linearGradient(
+                        core,
+                        startPoint: CGPoint(x: 0, y: rect.minY),
+                        endPoint: CGPoint(x: 0, y: rect.maxY)
+                    )
+                )
+            }
+
+            canvas.drawLayer { layer in
+                layer.addFilter(.blur(radius: (1.5 + level * 4) * plate))
+                layer.fill(glow, with: .color(.white.opacity(0.30 + level * 0.35)))
+            }
+        }
+    }
+}
+
+/// "液態脈衝" -- nineteen fine columns under a cosine window, dense enough to
+/// read as a continuous body of light that thickens with the voice.
+private struct LiquidPulse: View {
+    @Environment(\.hudPhase) private var hudPhase
+    let levels: [Double]
+
+    private static let barCount = 19
+
+    var body: some View {
+        Canvas { canvas, size in
+            let plate = Double(size.width) / nexVoiceHUDReferenceWidth
+            let level = levels.last ?? 0
+            let barWidth = 3.0 * plate
+            let spacing = 4.0 * plate
+            let height = Double(size.height)
+            let centerY = height / 2
+            let span = Double(Self.barCount) * barWidth + Double(Self.barCount - 1) * spacing
+            let startX = (Double(size.width) - span) / 2
+
+            var bright = Path()
+            for index in 0..<Self.barCount {
+                let norm = (Double(index) - Double(Self.barCount) / 2) / (Double(Self.barCount) / 2)
+                let window = cos(norm * .pi * 0.48)
+                let sway = sin(hudPhase * 2.2 + Double(index) * 0.4)
+                let history = levels[index % levels.count]
+                let energy = level * 0.85 + history * 0.15
+                let barHeight = max(4 * plate, energy * (height * 0.72) * window * (0.7 + sway * 0.3) + 4 * plate)
+                let x = startX + Double(index) * (barWidth + spacing)
+                let rect = CGRect(x: x, y: centerY - barHeight / 2, width: barWidth, height: barHeight)
+                var column = Path()
+                column.addRoundedRect(in: rect, cornerSize: CGSize(width: barWidth / 2, height: barWidth / 2))
+                bright.addPath(column)
+                canvas.fill(column, with: .color(.white.opacity(0.5 + level * 0.5 * window)))
+            }
+
+            if level > 0.3 {
+                canvas.drawLayer { layer in
+                    layer.addFilter(.blur(radius: (level - 0.3) * 6 * plate))
+                    layer.fill(bright, with: .color(.white.opacity(0.45)))
+                }
+            }
+        }
+    }
+}
+
+/// "極光絲帶" -- two mirrored translucent ribbons tapered at both ends, the
+/// pack's answer to a waveform with no frame and no hard edges.
+private struct GlowRibbon: View {
+    @Environment(\.hudPhase) private var hudPhase
+    let levels: [Double]
+
+    private static let points = 16
+
+    var body: some View {
+        Canvas { canvas, size in
+            let plate = Double(size.width) / nexVoiceHUDReferenceWidth
+            let level = levels.last ?? 0
+            let width = Double(size.width)
+            let height = Double(size.height)
+            let centerY = height / 2
+            let step = width / Double(Self.points - 1)
+
+            for layer in 0..<2 {
+                let foreground = layer == 1
+                let direction: Double = foreground ? 1 : -0.7
+                let amplitude = (4 * plate + level * (height * 0.38))
+                var ribbon = Path()
+                ribbon.move(to: CGPoint(x: 0, y: centerY))
+
+                for index in 0..<Self.points {
+                    let x = Double(index) * step
+                    let norm = (x / width - 0.5) * 2
+                    let taper = cos(norm * .pi * 0.45)
+                    let first = sin(hudPhase * 2.0 * direction + Double(index) * 0.5)
+                    let second = cos(hudPhase * 3.2 * direction - Double(index) * 0.3)
+                    let offset = (first + second * 0.5) * (amplitude * taper / 1.5)
+                    let y = centerY + (foreground ? offset : -offset)
+                    if index == 0 {
+                        ribbon.move(to: CGPoint(x: x, y: y))
+                    } else {
+                        let previousX = Double(index - 1) * step
+                        ribbon.addQuadCurve(
+                            to: CGPoint(x: (previousX + x) / 2, y: y),
+                            control: CGPoint(x: previousX, y: y)
+                        )
+                    }
+                }
+                ribbon.addLine(to: CGPoint(x: width, y: centerY))
+                ribbon.addLine(to: CGPoint(x: 0, y: centerY))
+                ribbon.closeSubpath()
+
+                let alpha = foreground ? (0.6 + level * 0.4) : (0.25 + level * 0.35)
+                canvas.drawLayer { blurred in
+                    blurred.addFilter(.blur(radius: (foreground ? 3 + level * 5 : 1) * plate))
+                    blurred.fill(ribbon, with: .color(.white.opacity(alpha * 0.7)))
+                }
+                canvas.fill(ribbon, with: .color(.white.opacity(alpha)))
+            }
         }
     }
 }

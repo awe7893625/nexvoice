@@ -10,45 +10,44 @@ enum VoiceMode: String, CaseIterable, Codable, Sendable {
     }
 }
 
+/// Retired 2026-07-25 (Rain: "又細又長又醜"): ink/spectrum/floatVoice/ekg/
+/// silk/cascade/meteor were all variations on a thin pale line or a scatter of
+/// dim dots -- the two things that read as unfinished on a black capsule.
+/// Stale rawValues decode back to `.glassBars`, so removing them cannot
+/// corrupt an existing preferences blob.
 enum HUDStyle: String, CaseIterable, Codable, Sendable {
     case glassBars
+    case bloomPills
+    case plasmaColumns
+    case liquidPulse
+    case auraRibbon
     case glass
-    case ink
     case aurora
     case siri
-    case spectrum
-    case floatVoice
     case prismCore
     case ember
     case comet
     case helix
     case mercury
-    case ekg
-    case meteor
     case plasma
-    case silk
-    case cascade
     case eclipse
 
     var displayName: String {
         switch self {
         case .glassBars: "亮條"
+        case .bloomPills: "膠囊光暈"
+        case .plasmaColumns: "等離子柱"
+        case .liquidPulse: "液態脈衝"
+        case .auraRibbon: "流光絲帶"
         case .glass: "琉璃"
-        case .ink: "墨韻"
         case .aurora: "極光"
         case .siri: "光球"
-        case .spectrum: "頻譜"
-        case .floatVoice: "浮聲"
         case .prismCore: "虹核"
         case .ember: "赤霞"
         case .comet: "彗尾"
         case .helix: "雙螺旋"
         case .mercury: "水銀"
-        case .ekg: "心電"
-        case .meteor: "流星群"
         case .plasma: "電漿"
-        case .silk: "絲綢"
-        case .cascade: "光瀑"
         case .eclipse: "日蝕"
         }
     }
@@ -125,7 +124,7 @@ struct ProductPreferences: Codable, Equatable, Sendable {
     var interactionSounds = true
     var muteOtherAudio = true
     var showDockIcon = true
-    var hudStyle: HUDStyle = .glass
+    var hudStyle: HUDStyle = .glassBars
     var hudChrome: HUDChrome = .borderless
     var liveCaptionsEnabled = true
     var subtitleStyle: SubtitleStyle = .bubble
