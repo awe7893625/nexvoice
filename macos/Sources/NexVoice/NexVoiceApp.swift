@@ -35,6 +35,11 @@ struct NexVoiceApp: App {
         DispatchQueue.main.async {
             model.startMonitoring()
         }
+        if CommandLine.arguments.contains("--hud-preview") {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak model] in
+                model?.previewRecorderHUD(thinking: false, duration: 15)
+            }
+        }
     }
 
     var body: some Scene {

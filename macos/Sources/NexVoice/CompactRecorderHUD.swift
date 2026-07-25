@@ -61,7 +61,7 @@ final class CompactRecorderHUD {
     private func makePanel() -> NSPanel {
         let root = CompactRecorderView(model: model)
         let panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 80, height: 36),
+            contentRect: NSRect(x: 0, y: 0, width: 148, height: 80),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false
@@ -69,7 +69,7 @@ final class CompactRecorderHUD {
         panel.level = .floating
         panel.isOpaque = false
         panel.backgroundColor = .clear
-        panel.hasShadow = true
+        panel.hasShadow = false
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient]
         panel.contentView = NSHostingView(rootView: root)
         panel.hidesOnDeactivate = false
@@ -87,7 +87,7 @@ final class CompactRecorderHUD {
         if let subtitlePanel {
             subtitlePanel.setFrameOrigin(NSPoint(
                 x: visible.midX - subtitlePanel.frame.width / 2,
-                y: origin.y + panel.frame.height + 8
+                y: origin.y + panel.frame.height - 14
             ))
         }
     }
@@ -105,7 +105,7 @@ final class CompactRecorderHUD {
         panel.level = .floating
         panel.isOpaque = false
         panel.backgroundColor = .clear
-        panel.hasShadow = true
+        panel.hasShadow = false
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient]
         panel.contentView = NSHostingView(rootView: SubtitleBubbleView(model: model))
         panel.hidesOnDeactivate = false
@@ -162,9 +162,20 @@ private struct CompactRecorderView: View {
 
     var body: some View {
         Group {
+            if model.chrome == .naked {
+                nakedContent
+            } else {
+                platedContent
+            }
+        }
+        .frame(width: 148, height: 80)
+    }
+
+    @ViewBuilder private var platedContent: some View {
+        Group {
             if model.isBusy {
                 Text(model.statusText)
-                    .font(.system(size: 10.5, weight: .medium, design: .rounded))
+                    .font(.system(size: 11, weight: .medium, design: .rounded))
                     .foregroundStyle(Color.white.opacity(0.9))
                     .lineLimit(1)
                     .minimumScaleFactor(0.7)
@@ -172,10 +183,24 @@ private struct CompactRecorderView: View {
                 HUDVisualization(style: model.style, levels: model.levels)
             }
         }
-        .frame(width: 64, height: 24)
-        .padding(.horizontal, 8)
-        .frame(width: 80, height: 36)
+        .frame(width: 78, height: 26)
+        .frame(width: 100, height: 40)
         .background(HUDCapsuleChrome(chrome: model.chrome, busy: model.isBusy))
+    }
+
+    /// Siri-style free-floating mode: no plate at all, visualization scaled up.
+    @ViewBuilder private var nakedContent: some View {
+        if model.isBusy {
+            Text(model.statusText)
+                .font(.system(size: 11.5, weight: .semibold, design: .rounded))
+                .foregroundStyle(Color.white.opacity(0.95))
+                .shadow(color: .black.opacity(0.7), radius: 3, y: 1)
+                .lineLimit(1)
+        } else {
+            HUDVisualization(style: model.style, levels: model.levels)
+                .scaleEffect(2.0)
+                .shadow(color: .black.opacity(0.30), radius: 7, y: 3)
+        }
     }
 }
 
@@ -185,7 +210,7 @@ struct HUDCapsuleChrome: View {
     var busy: Bool = false
 
     private var base: some View {
-        RoundedRectangle(cornerRadius: 18, style: .continuous)
+        Capsule()
             .fill(
                 LinearGradient(
                     colors: [
@@ -196,13 +221,13 @@ struct HUDCapsuleChrome: View {
                     endPoint: .bottom
                 )
             )
-            .shadow(color: .black.opacity(0.45), radius: 14, y: 6)
+            .shadow(color: .black.opacity(0.35), radius: 8, y: 3)
     }
 
     /// Warmer, metallic base used by `.emboss` -- colors lifted from the
     /// pack-B mockup's 浮雕 variant `drawEmboss()` glass fill.
     private var embossBase: some View {
-        RoundedRectangle(cornerRadius: 18, style: .continuous)
+        Capsule()
             .fill(
                 LinearGradient(
                     colors: [
@@ -213,7 +238,7 @@ struct HUDCapsuleChrome: View {
                     endPoint: .bottom
                 )
             )
-            .shadow(color: .black.opacity(0.45), radius: 14, y: 6)
+            .shadow(color: .black.opacity(0.35), radius: 8, y: 3)
     }
 
     /// Wraparound-safe trim segment: draws `length` of the capsule's
@@ -223,15 +248,15 @@ struct HUDCapsuleChrome: View {
     private func scanSegment(from start: Double, length: Double, opacity: Double, lineWidth: Double) -> some View {
         let end = start + length
         if end <= 1 {
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
+            Capsule()
                 .trim(from: start, to: end)
                 .stroke(Color.white.opacity(opacity), lineWidth: lineWidth)
         } else {
             ZStack {
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                Capsule()
                     .trim(from: start, to: 1)
                     .stroke(Color.white.opacity(opacity), lineWidth: lineWidth)
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                Capsule()
                     .trim(from: 0, to: end - 1)
                     .stroke(Color.white.opacity(opacity), lineWidth: lineWidth)
             }
@@ -249,7 +274,7 @@ struct HUDCapsuleChrome: View {
             base
         case .hairline:
             base.overlay {
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                Capsule()
                     .strokeBorder(
                         LinearGradient(
                             colors: [Color.white.opacity(0.22), Color.white.opacity(0.06)],
@@ -263,7 +288,7 @@ struct HUDCapsuleChrome: View {
             base.overlay {
                 TimelineView(.animation(minimumInterval: 0.05)) { context in
                     let t = context.date.timeIntervalSinceReferenceDate
-                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    Capsule()
                         .strokeBorder(
                             AngularGradient(
                                 colors: [
@@ -299,7 +324,7 @@ struct HUDCapsuleChrome: View {
                         }
                     } else {
                         let breathe = 0.5 + 0.5 * sin(t * 1.6)
-                        RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        Capsule()
                             .strokeBorder(Color.white.opacity(0.10 + 0.22 * breathe), lineWidth: 1)
                             .shadow(color: .white.opacity(0.12 * breathe), radius: 5)
                     }
@@ -312,7 +337,7 @@ struct HUDCapsuleChrome: View {
                 let t = context.date.timeIntervalSinceReferenceDate
                 let breathe = 0.5 + 0.5 * sin(t * 1.4)
                 ZStack {
-                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    Capsule()
                         .fill(
                             LinearGradient(
                                 colors: [
@@ -333,9 +358,9 @@ struct HUDCapsuleChrome: View {
         case .emboss:
             embossBase.overlay {
                 ZStack {
-                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    Capsule()
                         .strokeBorder(Color.black.opacity(0.5), lineWidth: 0.75)
-                    RoundedRectangle(cornerRadius: 16.5, style: .continuous)
+                    Capsule()
                         .strokeBorder(Color.white.opacity(0.18), lineWidth: 0.75)
                         .padding(1.5)
                 }
@@ -787,6 +812,7 @@ private struct SubtitleBubbleView: View {
             Spacer(minLength: 0)
             content
         }
+        .padding(.bottom, 10)
         .frame(width: 380, height: 130, alignment: .bottom)
     }
 
@@ -849,7 +875,7 @@ private struct BubbleSubtitle: View {
                             endPoint: .bottom
                         )
                     )
-                    .shadow(color: .black.opacity(0.4), radius: 12, y: 5)
+                    .shadow(color: .black.opacity(0.3), radius: 7, y: 2)
             )
     }
 }
