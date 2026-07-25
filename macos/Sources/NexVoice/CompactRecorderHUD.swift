@@ -174,12 +174,20 @@ private struct CompactRecorderView: View {
         .padding(.horizontal, 8)
         .frame(width: 80, height: 36)
         .background(
+            // Borderless obsidian: depth comes from the vertical sheen and a
+            // soft drop shadow instead of a stroked outline.
             RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(Color(red: 0.055, green: 0.055, blue: 0.06).opacity(0.98))
-                .overlay {
-                    RoundedRectangle(cornerRadius: 18, style: .continuous)
-                        .stroke(Color.white.opacity(0.2), lineWidth: 1)
-                }
+                .fill(
+                    LinearGradient(
+                        colors: [
+                            Color(red: 0.10, green: 0.10, blue: 0.115),
+                            Color(red: 0.045, green: 0.045, blue: 0.055),
+                        ],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                )
+                .shadow(color: .black.opacity(0.45), radius: 14, y: 6)
         )
     }
 }
@@ -647,10 +655,22 @@ private struct BubbleSubtitle: View {
             .foregroundStyle(.white)
             .lineLimit(1)
             .truncationMode(.middle)
-            .padding(.horizontal, 12)
+            .padding(.horizontal, 14)
             .frame(maxWidth: 360, minHeight: 30)
-            .background(.black.opacity(0.88), in: Capsule())
-            .overlay(Capsule().stroke(.white.opacity(0.16), lineWidth: 1))
+            .background(
+                Capsule()
+                    .fill(
+                        LinearGradient(
+                            colors: [
+                                Color(red: 0.115, green: 0.115, blue: 0.13).opacity(0.94),
+                                Color(red: 0.05, green: 0.05, blue: 0.06).opacity(0.94),
+                            ],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                    )
+                    .shadow(color: .black.opacity(0.4), radius: 12, y: 5)
+            )
     }
 }
 
