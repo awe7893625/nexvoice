@@ -56,7 +56,7 @@ struct OnboardingView: View {
         }
         .frame(width: 440, height: 520)
         .background(NV.bg)
-        .preferredColorScheme(.light)
+        .nvTheme(model.productPreferences.appTheme)
         .task {
             await model.refreshPermissions()
             step = model.suggestedOnboardingStep

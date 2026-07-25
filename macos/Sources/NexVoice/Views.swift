@@ -83,7 +83,7 @@ struct MenuPanelView: View {
         .padding(14)
         .frame(width: 280)
         .background(NV.bg)
-        .preferredColorScheme(.light)
+        .preferredColorScheme(model.productPreferences.appTheme.colorScheme)
     }
 
     private var statusLine: String {
@@ -153,7 +153,7 @@ struct DashboardView: View {
             .background(NV.bg)
         }
         .frame(minWidth: 880, minHeight: 580)
-        .preferredColorScheme(.light)
+        .nvTheme(model.productPreferences.appTheme)
         .background(OnboardingPresenter().environmentObject(model))
         .onAppear {
             model.reloadHistory()
@@ -196,19 +196,21 @@ private struct SidebarView: View {
                         if item == .history { model.reloadHistory() }
                         if item == .dictionary { model.reloadVocab() }
                     } label: {
+                        let isCurrent = page == item
                         HStack(spacing: 10) {
                             Image(systemName: item.symbol)
                                 .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(isCurrent ? NV.blue : NV.secondary)
                                 .frame(width: 18)
                             Text(item.rawValue)
-                                .font(.system(size: 13, weight: .semibold))
+                                .font(.system(size: 13, weight: isCurrent ? .bold : .medium))
+                                .foregroundStyle(isCurrent ? NV.ink : NV.secondary)
                             Spacer()
                         }
-                        .foregroundStyle(NV.ink)
                         .padding(.horizontal, 12)
                         .padding(.vertical, 9)
                         .background(
-                            page == item ? NV.selected : Color.clear,
+                            isCurrent ? NV.selected : Color.clear,
                             in: RoundedRectangle(cornerRadius: 10, style: .continuous)
                         )
                         // Color.clear draws no pixels, and .buttonStyle(.plain)
@@ -332,11 +334,14 @@ private struct HomePage: View {
                 }
                 .nvCard()
 
-                HStack(spacing: 12) {
+                // fixedSize pins the row to the tallest card's intrinsic height
+                // so a two-line tip no longer leaves its neighbours short.
+                HStack(alignment: .top, spacing: 12) {
                     tipCard(symbol: "mic.fill", title: "聽寫", text: model.hotkeyProfile.userInstruction)
                     tipCard(symbol: "xmark.circle", title: "取消", text: "Esc 或 HUD 上的 ✕")
                     tipCard(symbol: "doc.on.clipboard", title: "重貼", text: "⌥⌘V 重貼上一筆")
                 }
+                .fixedSize(horizontal: false, vertical: true)
 
                 VStack(alignment: .leading, spacing: 10) {
                     HStack {
@@ -389,7 +394,7 @@ private struct HomePage: View {
                         }
                         .padding(14)
                         .background(
-                            Color.black.opacity(0.025),
+                            NV.fill,
                             in: RoundedRectangle(cornerRadius: 12, style: .continuous)
                         )
                         .overlay(
@@ -438,17 +443,21 @@ private struct HomePage: View {
 
     private func tipCard(symbol: String, title: String, text: String) -> some View {
         VStack(alignment: .leading, spacing: 8) {
+            // Fixed glyph box: SF Symbols have differing bounding boxes, so
+            // without it the three icons sit at three different baselines.
             Image(systemName: symbol)
                 .font(.system(size: 16, weight: .semibold))
                 .foregroundStyle(NV.blue)
+                .frame(height: 20, alignment: .center)
             Text(title)
                 .font(.system(size: 13, weight: .bold))
                 .foregroundStyle(NV.ink)
             Text(text)
                 .font(.system(size: 12))
                 .foregroundStyle(NV.secondary)
+                .frame(maxHeight: .infinity, alignment: .top)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
         .nvCard()
     }
 }
@@ -711,504 +720,626 @@ private struct DictionaryPage: View {
 
 // MARK: - Settings
 
+/// The settings page carries a dozen distinct concerns. Flat-stacking them
+/// made a ~3000pt scroll where nothing was findable; these four groups keep
+/// each section to roughly one screen.
+private enum SettingsSection: String, CaseIterable, Identifiable {
+    case general = "一般"
+    case hotkeys = "快捷鍵"
+    case appearance = "外觀"
+    case engine = "引擎與隱私"
+
+    var id: String { rawValue }
+
+    var symbol: String {
+        switch self {
+        case .general: "slider.horizontal.3"
+        case .hotkeys: "keyboard"
+        case .appearance: "paintbrush"
+        case .engine: "cpu"
+        }
+    }
+
+    var subtitle: String {
+        switch self {
+        case .general: "權限、語言與音訊，以及 App 啟動行為。"
+        case .hotkeys: "錄音按鍵與三種語音模式各自的觸發方式。"
+        case .appearance: "HUD 波形、外框、字幕樣式與整個 App 的配色主題。"
+        case .engine: "本機 MLX、雲端備援與隱私開關；服務狀態可摺疊查看。"
+        }
+    }
+}
+
 private struct SettingsPage: View {
     @EnvironmentObject private var model: AppModel
     @Environment(\.openWindow) private var openWindow
+    @State private var section: SettingsSection = .general
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
-                pageTitle("設定", subtitle: "權限與隱私。進階服務狀態可摺疊查看。")
+        VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: 16) {
+                pageTitle("設定", subtitle: section.subtitle)
+                sectionTabs
+            }
+            .padding(.horizontal, 28)
+            .padding(.top, 28)
+            .padding(.bottom, 18)
 
-                VStack(alignment: .leading, spacing: 0) {
-                    settingsRow(
-                        title: "麥克風",
-                        detail: model.microphoneGranted ? "已授權" : "未授權 — 需在系統設定勾選 NexVoice",
-                        trailing: {
-                            if model.microphoneGranted {
-                                Image(systemName: "checkmark.circle.fill").foregroundStyle(NV.ok)
-                            } else {
-                                Button("打開設定") {
-                                    Task { _ = await model.requestMicrophoneAccess() }
-                                }
-                                .buttonStyle(NVSecondaryButton())
-                            }
-                        }
-                    )
-                    Divider().overlay(NV.hairline)
-                    settingsRow(
-                        title: "輔助使用（貼上）",
-                        detail: model.accessibilityGranted ? "已授權" : "未授權 — 需在系統設定勾選 NexVoice",
-                        trailing: {
-                            if model.accessibilityGranted {
-                                Image(systemName: "checkmark.circle.fill").foregroundStyle(NV.ok)
-                            } else {
-                                Button("打開設定") { model.requestAccessibilityAccess() }
-                                    .buttonStyle(NVSecondaryButton())
-                            }
-                        }
-                    )
-                    Divider().overlay(NV.hairline)
-                    settingsRow(
-                        title: "設定引導",
-                        detail: "分步教學，可再次開啟",
-                        trailing: {
-                            Button("開啟") {
-                                model.reopenOnboarding()
-                                openWindow(id: "onboarding")
-                                NSApp.activate(ignoringOtherApps: true)
-                            }
-                            .buttonStyle(NVSecondaryButton())
-                        }
-                    )
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    sectionBody
                 }
-                .nvCard()
+                .padding(.horizontal, 28)
+                .padding(.bottom, 28)
+            }
+            // Each group starts at its own top rather than inheriting the
+            // previous group's scroll offset.
+            .id(section)
+        }
+    }
 
-                VStack(alignment: .leading, spacing: 0) {
-                    settingsRow(
-                        title: "錄音按鍵",
-                        detail: "點擊後直接按下 Option／Command／Control／Fn 設定",
-                        trailing: {
-                            HotkeyCaptureButton(trigger: Binding(
-                                get: { model.hotkeyProfile.trigger },
-                                set: { trigger in
-                                    model.hotkeyProfile = HotkeyProfile(
-                                        trigger: trigger,
-                                        behavior: model.hotkeyProfile.behavior,
-                                        keyCode: nil
-                                    )
-                                }
-                            ), keyCode: Binding(
-                                get: { model.hotkeyProfile.keyCode },
-                                set: { code in
-                                    model.hotkeyProfile = HotkeyProfile(
-                                        trigger: model.hotkeyProfile.trigger,
-                                        behavior: model.hotkeyProfile.behavior,
-                                        keyCode: code
-                                    )
-                                }
-                            ))
-                        }
-                    )
-                    Divider().overlay(NV.hairline)
-                    settingsRow(
-                        title: "操作方式",
-                        detail: model.hotkeyProfile.behavior == .toggle
-                            ? "按一下開始，再按一下停止"
-                            : "按住錄音，放開後停止並轉錄",
-                        trailing: {
-                            Picker("操作方式", selection: Binding(
-                                get: { model.hotkeyProfile.behavior },
-                                set: { behavior in
-                                    model.hotkeyProfile = HotkeyProfile(
-                                        trigger: model.hotkeyProfile.trigger,
-                                        behavior: behavior,
-                                        keyCode: model.hotkeyProfile.keyCode
-                                    )
-                                }
-                            )) {
-                                ForEach(TriggerBehavior.allCases, id: \.self) { behavior in
-                                    Text(behavior.displayName).tag(behavior)
-                                }
-                            }
-                            .labelsHidden()
-                            .frame(width: 150)
-                        }
-                    )
-                }
-                .nvCard()
-
-                VStack(alignment: .leading, spacing: 0) {
-                    Text("快捷鍵模式").font(.system(size: 14, weight: .bold)).foregroundStyle(NV.ink).padding(.bottom, 8)
-                    modeHotkeyRow(.dictate, title: "聽寫", detail: "按下開始／停止並貼上")
-                    Divider().overlay(NV.hairline)
-                    modeHotkeyRow(.translate, title: "翻譯", detail: "按下開始／停止翻譯到目標語言")
-                    Divider().overlay(NV.hairline)
-                    modeHotkeyRow(.ask, title: "隨便問", detail: "按下開始／停止，回答目前問題")
-                }.nvCard()
-
-                VStack(alignment: .leading, spacing: 0) {
-                    Text("語言與音訊").font(.system(size: 14, weight: .bold)).foregroundStyle(NV.ink).padding(.bottom, 8)
-                    settingsRow(title: "介面語言", detail: "App 顯示語言", trailing: {
-                        Picker("介面語言", selection: $model.productPreferences.interfaceLanguage) { Text("繁體中文（台灣）").tag("繁體中文（台灣）"); Text("English").tag("English") }.labelsHidden().frame(width: 170)
-                    })
-                    Divider().overlay(NV.hairline)
-                    settingsRow(title: "翻譯目標", detail: "Translate 模式的預設語言", trailing: {
-                        Picker("翻譯目標", selection: $model.productPreferences.translationTarget) { Text("英語（美國）").tag("英語（美國）"); Text("日語").tag("日語"); Text("韓語").tag("韓語"); Text("繁體中文").tag("繁體中文") }.labelsHidden().frame(width: 170)
-                    })
-                    Divider().overlay(NV.hairline)
-                    toggleRow(title: "互動聲音", detail: "開始／停止時播放提示音", isOn: $model.productPreferences.interactionSounds)
-                    Divider().overlay(NV.hairline)
-                    toggleRow(title: "語音輸入時靜音", detail: "錄音期間暫停其他系統音訊", isOn: $model.productPreferences.muteOtherAudio)
-                    Divider().overlay(NV.hairline)
-                    toggleRow(title: "在 Dock 顯示", detail: "顯示或隱藏 Dock 圖示", isOn: $model.productPreferences.showDockIcon)
-                }.nvCard()
-
-                VStack(alignment: .leading, spacing: 16) {
-                    HStack {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("語音 HUD 樣式")
-                                .font(.system(size: 15, weight: .bold))
-                                .foregroundStyle(NV.ink)
-                            Text("錄音時顯示在畫面下方的小型浮動控制器動畫與聲波型態")
-                                .font(.system(size: 12.5))
-                                .foregroundStyle(NV.secondary)
-                        }
-                        Spacer()
-                        Toggle("即時字幕", isOn: $model.productPreferences.liveCaptionsEnabled)
-                            .toggleStyle(.switch)
+    private var sectionTabs: some View {
+        HStack(spacing: 4) {
+            ForEach(SettingsSection.allCases) { item in
+                let isCurrent = item == section
+                Button {
+                    withAnimation(.easeOut(duration: 0.14)) { section = item }
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: item.symbol)
+                            .font(.system(size: 11, weight: .semibold))
+                        Text(item.rawValue)
+                            .font(.system(size: 12.5, weight: .semibold))
                     }
+                    .foregroundStyle(isCurrent ? NV.ink : NV.secondary)
+                    .padding(.horizontal, 13)
+                    .padding(.vertical, 7)
+                    .background(isCurrent ? NV.card : Color.clear, in: Capsule())
+                    .overlay {
+                        if isCurrent { Capsule().stroke(NV.hairline, lineWidth: 1) }
+                    }
+                    .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(4)
+        .background(NV.fill, in: Capsule())
+        .fixedSize()
+    }
 
-                    LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 12), count: 3), spacing: 12) {
-                        ForEach(HUDStyle.allCases, id: \.self) { style in
-                            Button {
-                                model.productPreferences.hudStyle = style
-                            } label: {
-                                VStack(spacing: 10) {
-                                    TimelineView(.animation(minimumInterval: 0.06)) { context in
-                                        let t = context.date.timeIntervalSinceReferenceDate
-                                        // Calm speech-like preview: a slow breath with occasional
-                                        // gentle swells, never the frantic full-range pumping that
-                                        // made the whole grid feel jittery.
-                                        let synthetic: [Double] = (0..<11).map { i -> Double in
-                                            let di = Double(i)
-                                            let breath: Double = 0.5 + 0.5 * sin(t * 0.55 + di * 0.3)
-                                            let swell: Double = max(0, sin(t * 0.23))
-                                            return 0.14 + 0.10 * breath + 0.22 * swell
-                                        }
-                                        HUDVisualization(style: style, levels: synthetic)
+    @ViewBuilder
+    private var sectionBody: some View {
+        switch section {
+        case .general:
+            permissionsCard
+            languageAudioCard
+            startupCard
+        case .hotkeys:
+            recordKeyCard
+            modeHotkeysCard
+        case .appearance:
+            appThemeCard
+            hudStyleCard
+            hudChromeCard
+            subtitleStyleCard
+        case .engine:
+            localModelCard
+            cloudKeysCard
+            privacyCard
+            serviceStatusCard
+        }
+    }
+
+    // MARK: General
+
+    private var permissionsCard: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            cardHeader("權限", "沒有這兩項就無法錄音與貼上")
+            settingsRow(
+                title: "麥克風",
+                detail: model.microphoneGranted ? "已授權" : "未授權 — 需在系統設定勾選 NexVoice",
+                trailing: {
+                    if model.microphoneGranted {
+                        Image(systemName: "checkmark.circle.fill").foregroundStyle(NV.ok)
+                    } else {
+                        Button("打開設定") {
+                            Task { _ = await model.requestMicrophoneAccess() }
+                        }
+                        .buttonStyle(NVSecondaryButton())
+                    }
+                }
+            )
+            Divider().overlay(NV.hairline)
+            settingsRow(
+                title: "輔助使用（貼上）",
+                detail: model.accessibilityGranted ? "已授權" : "未授權 — 需在系統設定勾選 NexVoice",
+                trailing: {
+                    if model.accessibilityGranted {
+                        Image(systemName: "checkmark.circle.fill").foregroundStyle(NV.ok)
+                    } else {
+                        Button("打開設定") { model.requestAccessibilityAccess() }
+                            .buttonStyle(NVSecondaryButton())
+                    }
+                }
+            )
+            Divider().overlay(NV.hairline)
+            settingsRow(
+                title: "設定引導",
+                detail: "分步教學，可再次開啟",
+                trailing: {
+                    Button("開啟") {
+                        model.reopenOnboarding()
+                        openWindow(id: "onboarding")
+                        NSApp.activate(ignoringOtherApps: true)
+                    }
+                    .buttonStyle(NVSecondaryButton())
+                }
+            )
+        }
+        .nvCard()
+    }
+
+    private var languageAudioCard: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            cardHeader("語言與音訊")
+            settingsRow(title: "介面語言", detail: "App 顯示語言", trailing: {
+                Picker("介面語言", selection: $model.productPreferences.interfaceLanguage) {
+                    Text("繁體中文（台灣）").tag("繁體中文（台灣）")
+                    Text("English").tag("English")
+                }
+                .labelsHidden()
+                .frame(width: 170)
+            })
+            Divider().overlay(NV.hairline)
+            settingsRow(title: "翻譯目標", detail: "Translate 模式的預設語言", trailing: {
+                Picker("翻譯目標", selection: $model.productPreferences.translationTarget) {
+                    Text("英語（美國）").tag("英語（美國）")
+                    Text("日語").tag("日語")
+                    Text("韓語").tag("韓語")
+                    Text("繁體中文").tag("繁體中文")
+                }
+                .labelsHidden()
+                .frame(width: 170)
+            })
+            Divider().overlay(NV.hairline)
+            toggleRow(title: "互動聲音", detail: "開始／停止時播放提示音", isOn: $model.productPreferences.interactionSounds)
+            Divider().overlay(NV.hairline)
+            toggleRow(title: "語音輸入時靜音", detail: "錄音期間暫停其他系統音訊", isOn: $model.productPreferences.muteOtherAudio)
+        }
+        .nvCard()
+    }
+
+    private var startupCard: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            cardHeader("啟動與 Dock")
+            toggleRow(
+                title: "登入時啟動",
+                detail: "放在選單列，不自動搶 Option",
+                isOn: Binding(
+                    get: { model.openAtLogin },
+                    set: { model.setOpenAtLogin($0) }
+                )
+            )
+            Divider().overlay(NV.hairline)
+            toggleRow(title: "在 Dock 顯示", detail: "顯示或隱藏 Dock 圖示", isOn: $model.productPreferences.showDockIcon)
+        }
+        .nvCard()
+    }
+
+    // MARK: Hotkeys
+
+    private var recordKeyCard: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            cardHeader("主要觸發", "所有模式共用；下方可為個別模式另外指定")
+            settingsRow(
+                title: "錄音按鍵",
+                detail: "點擊後直接按下 Option／Command／Control／Fn 設定",
+                trailing: {
+                    HotkeyCaptureButton(trigger: Binding(
+                        get: { model.hotkeyProfile.trigger },
+                        set: { trigger in
+                            model.hotkeyProfile = HotkeyProfile(
+                                trigger: trigger,
+                                behavior: model.hotkeyProfile.behavior,
+                                keyCode: nil
+                            )
+                        }
+                    ), keyCode: Binding(
+                        get: { model.hotkeyProfile.keyCode },
+                        set: { code in
+                            model.hotkeyProfile = HotkeyProfile(
+                                trigger: model.hotkeyProfile.trigger,
+                                behavior: model.hotkeyProfile.behavior,
+                                keyCode: code
+                            )
+                        }
+                    ))
+                }
+            )
+            Divider().overlay(NV.hairline)
+            settingsRow(
+                title: "操作方式",
+                detail: model.hotkeyProfile.behavior == .toggle
+                    ? "按一下開始，再按一下停止"
+                    : "按住錄音，放開後停止並轉錄",
+                trailing: {
+                    Picker("操作方式", selection: Binding(
+                        get: { model.hotkeyProfile.behavior },
+                        set: { behavior in
+                            model.hotkeyProfile = HotkeyProfile(
+                                trigger: model.hotkeyProfile.trigger,
+                                behavior: behavior,
+                                keyCode: model.hotkeyProfile.keyCode
+                            )
+                        }
+                    )) {
+                        ForEach(TriggerBehavior.allCases, id: \.self) { behavior in
+                            Text(behavior.displayName).tag(behavior)
+                        }
+                    }
+                    .labelsHidden()
+                    .frame(width: 150)
+                }
+            )
+        }
+        .nvCard()
+    }
+
+    private var modeHotkeysCard: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            cardHeader("快捷鍵模式", "每個模式可綁不同按鍵與觸發方式")
+            modeHotkeyRow(.dictate, title: "聽寫", detail: "按下開始／停止並貼上")
+            Divider().overlay(NV.hairline)
+            modeHotkeyRow(.translate, title: "翻譯", detail: "按下開始／停止翻譯到目標語言")
+            Divider().overlay(NV.hairline)
+            modeHotkeyRow(.ask, title: "隨便問", detail: "按下開始／停止，回答目前問題")
+        }
+        .nvCard()
+    }
+
+    // MARK: Appearance
+
+    private var appThemeCard: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            cardHeader("外觀主題", "整個 App 視窗的配色風格")
+
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 12), count: 3), spacing: 12) {
+                ForEach(AppTheme.allCases, id: \.self) { theme in
+                    let swatch = nvPreviewPalette(for: theme)
+                    Button {
+                        model.productPreferences.appTheme = theme
+                    } label: {
+                        tileChrome(selected: model.productPreferences.appTheme == theme) {
+                            VStack(spacing: 10) {
+                                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                    .fill(swatch.bg)
+                                    .overlay(alignment: .topLeading) {
+                                        RoundedRectangle(cornerRadius: 4, style: .continuous)
+                                            .fill(swatch.card)
+                                            .frame(width: 28, height: 18)
+                                            .padding(6)
                                     }
-                                    .frame(width: 110, height: 50)
-                                    .frame(maxWidth: .infinity)
-                                    .background(
-                                        LinearGradient(
-                                            colors: [Color(red: 0.12, green: 0.13, blue: 0.17), Color(red: 0.08, green: 0.09, blue: 0.12)],
-                                            startPoint: .top, endPoint: .bottom
-                                        ),
-                                        in: RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                    )
+                                    .overlay(alignment: .bottomTrailing) {
+                                        Circle()
+                                            .fill(swatch.accent)
+                                            .frame(width: 12, height: 12)
+                                            .padding(6)
+                                    }
                                     .overlay(
                                         RoundedRectangle(cornerRadius: 10, style: .continuous)
                                             .stroke(NV.hairline, lineWidth: 1)
                                     )
-                                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                                    
-                                    Text(style.displayName)
-                                        .font(.system(size: 12, weight: .semibold))
-                                        .foregroundStyle(model.productPreferences.hudStyle == style ? NV.blue : NV.ink)
-                                        .lineLimit(1)
-                                }
-                                .frame(maxWidth: .infinity)
-                                .padding(12)
-                                .background(
-                                    model.productPreferences.hudStyle == style ? NV.selected : NV.card,
-                                    in: RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                )
-                                .overlay {
-                                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                        .stroke(model.productPreferences.hudStyle == style ? NV.blue : NV.hairline, lineWidth: model.productPreferences.hudStyle == style ? 1.5 : 1)
-                                }
+                                    .frame(maxWidth: .infinity)
+                                    .frame(height: 50)
+
+                                tileLabel(theme.displayName, selected: model.productPreferences.appTheme == theme)
                             }
-                            .buttonStyle(.plain)
                         }
                     }
-                    .padding(.top, 4)
-
-                    Text(model.productPreferences.liveCaptionsEnabled
-                         ? "即時字幕已開啟：錄音中會在 HUD 上方自動同步顯示 partial 聽寫文字。"
-                         : "即時字幕已關閉：停止錄音後執行最終高精準度轉錄，資源佔用最省。")
-                        .font(.system(size: 12))
-                        .foregroundStyle(NV.secondary)
-                        .padding(.top, 2)
-                }
-                .nvCard()
-
-                VStack(alignment: .leading, spacing: 16) {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("HUD 外框")
-                            .font(.system(size: 15, weight: .bold))
-                            .foregroundStyle(NV.ink)
-                        Text("套在膠囊背景上的外框樣式，與上方波形樣式可自由搭配")
-                            .font(.system(size: 12.5))
-                            .foregroundStyle(NV.secondary)
-                    }
-
-                    LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 12), count: 3), spacing: 12) {
-                        ForEach(HUDChrome.allCases, id: \.self) { chrome in
-                            Button {
-                                model.productPreferences.hudChrome = chrome
-                            } label: {
-                                VStack(spacing: 10) {
-                                    HUDCapsuleChrome(chrome: chrome)
-                                        .frame(width: 80, height: 36)
-                                        .frame(maxWidth: .infinity)
-                                        .frame(height: 50)
-
-                                    Text(chrome.displayName)
-                                        .font(.system(size: 12, weight: .semibold))
-                                        .foregroundStyle(model.productPreferences.hudChrome == chrome ? NV.blue : NV.ink)
-                                        .lineLimit(1)
-                                }
-                                .frame(maxWidth: .infinity)
-                                .padding(12)
-                                .background(
-                                    model.productPreferences.hudChrome == chrome ? NV.selected : NV.card,
-                                    in: RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                )
-                                .overlay {
-                                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                        .stroke(model.productPreferences.hudChrome == chrome ? NV.blue : NV.hairline, lineWidth: model.productPreferences.hudChrome == chrome ? 1.5 : 1)
-                                }
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-                    .padding(.top, 4)
-                }
-                .nvCard()
-
-                VStack(alignment: .leading, spacing: 16) {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("外觀主題")
-                            .font(.system(size: 15, weight: .bold))
-                            .foregroundStyle(NV.ink)
-                        Text("整個 App 視窗的配色風格")
-                            .font(.system(size: 12.5))
-                            .foregroundStyle(NV.secondary)
-                    }
-
-                    LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 12), count: 3), spacing: 12) {
-                        ForEach(AppTheme.allCases, id: \.self) { theme in
-                            let swatch = nvPreviewPalette(for: theme)
-                            Button {
-                                model.productPreferences.appTheme = theme
-                            } label: {
-                                VStack(spacing: 10) {
-                                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                        .fill(swatch.bg)
-                                        .overlay(alignment: .topLeading) {
-                                            RoundedRectangle(cornerRadius: 4, style: .continuous)
-                                                .fill(swatch.card)
-                                                .frame(width: 28, height: 18)
-                                                .padding(6)
-                                        }
-                                        .overlay(alignment: .bottomTrailing) {
-                                            Circle()
-                                                .fill(swatch.accent)
-                                                .frame(width: 12, height: 12)
-                                                .padding(6)
-                                        }
-                                        .overlay(
-                                            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                                .stroke(NV.hairline, lineWidth: 1)
-                                        )
-                                        .frame(maxWidth: .infinity)
-                                        .frame(height: 50)
-
-                                    Text(theme.displayName)
-                                        .font(.system(size: 12, weight: .semibold))
-                                        .foregroundStyle(model.productPreferences.appTheme == theme ? NV.blue : NV.ink)
-                                        .lineLimit(1)
-                                }
-                                .frame(maxWidth: .infinity)
-                                .padding(12)
-                                .background(
-                                    model.productPreferences.appTheme == theme ? NV.selected : NV.card,
-                                    in: RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                )
-                                .overlay {
-                                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                        .stroke(model.productPreferences.appTheme == theme ? NV.blue : NV.hairline, lineWidth: model.productPreferences.appTheme == theme ? 1.5 : 1)
-                                }
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-                    .padding(.top, 4)
-                }
-                .nvCard()
-
-                VStack(alignment: .leading, spacing: 16) {
-                    VStack(alignment: .leading, spacing: 4) {
-                        HStack(spacing: 8) {
-                            Image(systemName: "captions.bubble.fill")
-                                .font(.system(size: 16, weight: .bold))
-                                .foregroundStyle(NV.blue)
-                            Text("即時字幕顯示樣式 (Live Subtitles)")
-                                .font(.system(size: 15, weight: .bold))
-                                .foregroundStyle(NV.ink)
-                        }
-                        Text("錄音時懸浮在畫面中 HUD 控制器上方同步顯示的動態字幕視覺風格")
-                            .font(.system(size: 12.5))
-                            .foregroundStyle(NV.secondary)
-                    }
-
-                    LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: 3), spacing: 12) {
-                        ForEach(SubtitleStyle.allCases, id: \.self) { style in
-                            Button {
-                                model.productPreferences.subtitleStyle = style
-                            } label: {
-                                VStack(alignment: .leading, spacing: 8) {
-                                    HStack {
-                                        Text(style.displayName)
-                                            .font(.system(size: 12.5, weight: .bold))
-                                            .foregroundStyle(model.productPreferences.subtitleStyle == style ? NV.blue : NV.ink)
-                                            .lineLimit(1)
-                                        Spacer(minLength: 2)
-                                        if model.productPreferences.subtitleStyle == style {
-                                            Image(systemName: "checkmark.circle.fill")
-                                                .font(.system(size: 11))
-                                                .foregroundStyle(NV.blue)
-                                        }
-                                    }
-                                    
-                                    SubtitleStylePreview(style: style, text: "今天開會，明天再做。")
-                                        .fixedSize()
-                                        .scaleEffect(0.55)
-                                        .frame(height: 42)
-                                        .frame(maxWidth: .infinity)
-                                        .background(
-                                            LinearGradient(
-                                                colors: [Color(red: 0.12, green: 0.13, blue: 0.17), Color(red: 0.08, green: 0.09, blue: 0.12)],
-                                                startPoint: .top, endPoint: .bottom
-                                            ),
-                                            in: RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                        )
-                                        .overlay(
-                                            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                                .stroke(NV.hairline, lineWidth: 1)
-                                        )
-                                        .clipped()
-                                }
-                                .padding(10)
-                                .background(
-                                    model.productPreferences.subtitleStyle == style ? NV.selected : NV.card,
-                                    in: RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                )
-                                .overlay {
-                                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                        .stroke(model.productPreferences.subtitleStyle == style ? NV.blue : NV.hairline, lineWidth: model.productPreferences.subtitleStyle == style ? 1.5 : 1)
-                                }
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-                    .padding(.top, 4)
-                }
-                .nvCard()
-
-                VStack(alignment: .leading, spacing: 12) {
-                    Text("本地 MLX 模型").font(.system(size: 14, weight: .semibold)).foregroundStyle(NV.ink)
-                    TextField("Hugging Face / 本地模型名稱", text: $model.localModelName).textFieldStyle(.roundedBorder)
-                    TextField("本地 API endpoint（只允許 127.0.0.1:5112）", text: $model.localEndpoint).textFieldStyle(.roundedBorder)
-                    Text("App 以 bytes + token 呼叫本機 runtime，不傳送檔案路徑。").font(.system(size: 11.5)).foregroundStyle(NV.secondary)
-                }.padding(16).background(NV.card, in: RoundedRectangle(cornerRadius: NV.radius, style: .continuous))
-
-                VStack(alignment: .leading, spacing: 12) {
-                    Text("免費雲端 API（選填）").font(.system(size: 14, weight: .semibold)).foregroundStyle(NV.ink)
-                    SecureField("Groq API key（選填）", text: $model.groqAPIKeyInput).textFieldStyle(.roundedBorder)
-                    SecureField("Gemini API key（選填）", text: $model.geminiAPIKeyInput).textFieldStyle(.roundedBorder)
-                    HStack {
-                        Text("Groq：\(model.groqConfigured ? "已設定" : "未設定") · Gemini：\(model.geminiConfigured ? "已設定" : "未設定")")
-                            .font(.system(size: 11.5)).foregroundStyle(NV.secondary)
-                        Spacer()
-                        if model.providerTestInProgress { ProgressView().controlSize(.small) }
-                        Button("儲存、測試並啟用") { model.saveTestAndEnableProviders() }
-                            .buttonStyle(NVSecondaryButton())
-                            .disabled(model.providerTestInProgress)
-                    }
-                    if !model.providerTestStatus.isEmpty {
-                        Text(model.providerTestStatus)
-                            .font(.system(size: 11.5, weight: .semibold))
-                            .foregroundStyle(model.providerTestStatus.contains("✕") ? NV.warn : NV.ok)
-                    }
-                    Text("按下按鈕代表允許雲端備援；key 只寫入本機 0600 檔案，並會立即驗證是否真的可用。")
-                        .font(.system(size: 11.5)).foregroundStyle(NV.secondary)
-                }.padding(16).background(NV.card, in: RoundedRectangle(cornerRadius: NV.radius, style: .continuous))
-
-                VStack(alignment: .leading, spacing: 0) {
-                    toggleRow(
-                        title: "零費用模式（建議）",
-                        detail: "只用 M5 本機服務；API 月支出預設為 0",
-                        isOn: $model.zeroCostMode
-                    )
-                    Divider().overlay(NV.hairline)
-                    toggleRow(
-                        title: "僅限本機（隱私）",
-                        detail: "關閉雲端 STT／整理，本機不可用時直接失敗",
-                        isOn: $model.privacyMode
-                    )
-                    Divider().overlay(NV.hairline)
-                    toggleRow(
-                        title: "雲端轉錄備援",
-                        detail: model.zeroCostMode
-                            ? "零費用模式下停用"
-                            : "使用自備 Groq API；可能消耗供應商額度",
-                        isOn: $model.cloudFallbackEnabled
-                    )
-                    .disabled(model.zeroCostMode || model.privacyMode)
-                    Divider().overlay(NV.hairline)
-                    toggleRow(
-                        title: "雲端 AI 整理",
-                        detail: model.zeroCostMode || model.privacyMode
-                            ? "本機／零費用模式下停用"
-                            : "Groq → Gemini → 原文；可能消耗 API 額度",
-                        isOn: $model.cleanupEnabled
-                    )
-                    .disabled(model.zeroCostMode || model.privacyMode)
-                    Divider().overlay(NV.hairline)
-                    toggleRow(
-                        title: "長內容自動整理重點",
-                        detail: model.zeroCostMode || model.privacyMode
-                            ? "本機／零費用模式下停用"
-                            : "口述超過約 200 字時自動整理成條列重點；短內容不受影響",
-                        isOn: $model.smartFormatEnabled
-                    )
-                    .disabled(model.zeroCostMode || model.privacyMode)
-                    Divider().overlay(NV.hairline)
-                    toggleRow(
-                        title: "登入時啟動",
-                        detail: "放在選單列，不自動搶 Option",
-                        isOn: Binding(
-                            get: { model.openAtLogin },
-                            set: { model.setOpenAtLogin($0) }
-                        )
-                    )
-                }
-                .nvCard()
-
-                DisclosureGroup {
-                    VStack(alignment: .leading, spacing: 10) {
-                        serviceLine(name: "M5 MLX", status: model.mlx)
-                        serviceLine(name: "資料服務", status: model.gateway)
-                        HStack {
-                            Text("快捷鍵操控權")
-                                .font(.system(size: 12.5, weight: .medium))
-                                .foregroundStyle(NV.ink)
-                            Spacer()
-                            Text(model.currentHotkeyOwner.displayName)
-                                .font(.system(size: 12, design: .monospaced))
-                                .foregroundStyle(NV.secondary)
-                        }
-                        Text("路由：\(model.currentRoute.rawValue)")
-                            .font(.system(size: 12))
-                            .foregroundStyle(NV.secondary)
-                    }
-                    .padding(.top, 8)
-                } label: {
-                    Text("進階：服務狀態")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(NV.ink)
-                }
-                .padding(16)
-                .background(NV.card, in: RoundedRectangle(cornerRadius: NV.radius, style: .continuous))
-                .overlay {
-                    RoundedRectangle(cornerRadius: NV.radius, style: .continuous)
-                        .stroke(NV.hairline, lineWidth: 1)
+                    .buttonStyle(.plain)
                 }
             }
-            .padding(28)
         }
+        .nvCard()
+    }
+
+    private var hudStyleCard: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            cardHeader("語音 HUD 樣式", "錄音時顯示在畫面下方的小型浮動控制器動畫與聲波型態")
+
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 12), count: 3), spacing: 12) {
+                ForEach(HUDStyle.allCases, id: \.self) { style in
+                    Button {
+                        model.productPreferences.hudStyle = style
+                    } label: {
+                        tileChrome(selected: model.productPreferences.hudStyle == style) {
+                            VStack(spacing: 10) {
+                                TimelineView(.animation(minimumInterval: 0.06)) { context in
+                                    let t = context.date.timeIntervalSinceReferenceDate
+                                    // Calm speech-like preview: a slow breath with occasional
+                                    // gentle swells, never the frantic full-range pumping that
+                                    // made the whole grid feel jittery.
+                                    let synthetic: [Double] = (0..<11).map { i -> Double in
+                                        let di = Double(i)
+                                        let breath: Double = 0.5 + 0.5 * sin(t * 0.55 + di * 0.3)
+                                        let swell: Double = max(0, sin(t * 0.23))
+                                        return 0.14 + 0.10 * breath + 0.22 * swell
+                                    }
+                                    HUDVisualization(style: style, levels: synthetic)
+                                }
+                                .frame(width: 110, height: 50)
+                                .frame(maxWidth: .infinity)
+                                .background(hudPlate, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                        .stroke(Color.white.opacity(0.10), lineWidth: 1)
+                                )
+                                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+
+                                tileLabel(style.displayName, selected: model.productPreferences.hudStyle == style)
+                            }
+                        }
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+        .nvCard()
+    }
+
+    private var hudChromeCard: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            cardHeader("HUD 外框", "套在膠囊背景上的外框樣式，與波形樣式可自由搭配")
+
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 12), count: 3), spacing: 12) {
+                ForEach(HUDChrome.allCases, id: \.self) { chrome in
+                    Button {
+                        model.productPreferences.hudChrome = chrome
+                    } label: {
+                        tileChrome(selected: model.productPreferences.hudChrome == chrome) {
+                            VStack(spacing: 10) {
+                                HUDCapsuleChrome(chrome: chrome)
+                                    .frame(width: 80, height: 36)
+                                    .frame(maxWidth: .infinity)
+                                    .frame(height: 50)
+
+                                tileLabel(chrome.displayName, selected: model.productPreferences.hudChrome == chrome)
+                            }
+                        }
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+        .nvCard()
+    }
+
+    private var subtitleStyleCard: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            // The enable switch lives with the styles it governs rather than
+            // on the HUD card, which configures a different surface.
+            HStack(alignment: .top) {
+                cardHeader("即時字幕", "錄音時懸浮在 HUD 控制器上方同步顯示的動態字幕")
+                Spacer(minLength: 12)
+                Toggle("", isOn: $model.productPreferences.liveCaptionsEnabled)
+                    .labelsHidden()
+                    .toggleStyle(.switch)
+                    .tint(NV.blue)
+            }
+
+            Text(model.productPreferences.liveCaptionsEnabled
+                 ? "已開啟：錄音中會在 HUD 上方自動同步顯示 partial 聽寫文字。"
+                 : "已關閉：停止錄音後執行最終高精準度轉錄，資源佔用最省。")
+                .font(.system(size: 12))
+                .foregroundStyle(NV.secondary)
+
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 12), count: 3), spacing: 12) {
+                ForEach(SubtitleStyle.allCases, id: \.self) { style in
+                    let selected = model.productPreferences.subtitleStyle == style
+                    Button {
+                        model.productPreferences.subtitleStyle = style
+                    } label: {
+                        tileChrome(selected: selected) {
+                            VStack(spacing: 10) {
+                                SubtitleStylePreview(style: style, text: "今天開會，明天再做。")
+                                    .fixedSize()
+                                    .scaleEffect(0.55)
+                                    .frame(height: 50)
+                                    .frame(maxWidth: .infinity)
+                                    .background(hudPlate, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                            .stroke(Color.white.opacity(0.10), lineWidth: 1)
+                                    )
+                                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+
+                                tileLabel(style.displayName, selected: selected)
+                            }
+                        }
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .opacity(model.productPreferences.liveCaptionsEnabled ? 1 : 0.4)
+            .disabled(!model.productPreferences.liveCaptionsEnabled)
+        }
+        .nvCard()
+    }
+
+    // MARK: Engine & privacy
+
+    private var localModelCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            cardHeader("本地 MLX 模型")
+            TextField("Hugging Face / 本地模型名稱", text: $model.localModelName)
+                .textFieldStyle(.roundedBorder)
+            TextField("本地 API endpoint（只允許 127.0.0.1:5112）", text: $model.localEndpoint)
+                .textFieldStyle(.roundedBorder)
+            Text("App 以 bytes + token 呼叫本機 runtime，不傳送檔案路徑。")
+                .font(.system(size: 11.5))
+                .foregroundStyle(NV.secondary)
+        }
+        .nvCard()
+    }
+
+    private var cloudKeysCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            cardHeader("免費雲端 API（選填）")
+            SecureField("Groq API key（選填）", text: $model.groqAPIKeyInput)
+                .textFieldStyle(.roundedBorder)
+            SecureField("Gemini API key（選填）", text: $model.geminiAPIKeyInput)
+                .textFieldStyle(.roundedBorder)
+            HStack {
+                Text("Groq：\(model.groqConfigured ? "已設定" : "未設定") · Gemini：\(model.geminiConfigured ? "已設定" : "未設定")")
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(NV.secondary)
+                Spacer()
+                if model.providerTestInProgress { ProgressView().controlSize(.small) }
+                Button("儲存、測試並啟用") { model.saveTestAndEnableProviders() }
+                    .buttonStyle(NVSecondaryButton())
+                    .disabled(model.providerTestInProgress)
+            }
+            if !model.providerTestStatus.isEmpty {
+                Text(model.providerTestStatus)
+                    .font(.system(size: 11.5, weight: .semibold))
+                    .foregroundStyle(model.providerTestStatus.contains("✕") ? NV.warn : NV.ok)
+            }
+            Text("按下按鈕代表允許雲端備援；key 只寫入本機 0600 檔案，並會立即驗證是否真的可用。")
+                .font(.system(size: 11.5))
+                .foregroundStyle(NV.secondary)
+        }
+        .nvCard()
+    }
+
+    private var privacyCard: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            cardHeader("隱私與成本")
+            toggleRow(
+                title: "零費用模式（建議）",
+                detail: "只用 M5 本機服務；API 月支出預設為 0",
+                isOn: $model.zeroCostMode
+            )
+            Divider().overlay(NV.hairline)
+            toggleRow(
+                title: "僅限本機（隱私）",
+                detail: "關閉雲端 STT／整理，本機不可用時直接失敗",
+                isOn: $model.privacyMode
+            )
+            Divider().overlay(NV.hairline)
+            toggleRow(
+                title: "雲端轉錄備援",
+                detail: model.zeroCostMode
+                    ? "零費用模式下停用"
+                    : "使用自備 Groq API；可能消耗供應商額度",
+                isOn: $model.cloudFallbackEnabled
+            )
+            .disabled(model.zeroCostMode || model.privacyMode)
+            Divider().overlay(NV.hairline)
+            toggleRow(
+                title: "雲端 AI 整理",
+                detail: model.zeroCostMode || model.privacyMode
+                    ? "本機／零費用模式下停用"
+                    : "Groq → Gemini → 原文；可能消耗 API 額度",
+                isOn: $model.cleanupEnabled
+            )
+            .disabled(model.zeroCostMode || model.privacyMode)
+            Divider().overlay(NV.hairline)
+            toggleRow(
+                title: "長內容自動整理重點",
+                detail: model.zeroCostMode || model.privacyMode
+                    ? "本機／零費用模式下停用"
+                    : "口述超過約 200 字時自動整理成條列重點；短內容不受影響",
+                isOn: $model.smartFormatEnabled
+            )
+            .disabled(model.zeroCostMode || model.privacyMode)
+        }
+        .nvCard()
+    }
+
+    private var serviceStatusCard: some View {
+        DisclosureGroup {
+            VStack(alignment: .leading, spacing: 10) {
+                serviceLine(name: "M5 MLX", status: model.mlx)
+                serviceLine(name: "資料服務", status: model.gateway)
+                HStack {
+                    Text("快捷鍵操控權")
+                        .font(.system(size: 12.5, weight: .medium))
+                        .foregroundStyle(NV.ink)
+                    Spacer()
+                    Text(model.currentHotkeyOwner.displayName)
+                        .font(.system(size: 12, design: .monospaced))
+                        .foregroundStyle(NV.secondary)
+                }
+                Text("路由：\(model.currentRoute.rawValue)")
+                    .font(.system(size: 12))
+                    .foregroundStyle(NV.secondary)
+            }
+            .padding(.top, 8)
+        } label: {
+            Text("進階：服務狀態")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(NV.ink)
+        }
+        .padding(16)
+        .background(NV.card, in: RoundedRectangle(cornerRadius: NV.radius, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: NV.radius, style: .continuous)
+                .stroke(NV.hairline, lineWidth: 1)
+        }
+    }
+
+    // MARK: Card chrome
+
+    private func cardHeader(_ title: String, _ detail: String? = nil) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(.system(size: 14.5, weight: .bold))
+                .foregroundStyle(NV.ink)
+            if let detail {
+                Text(detail)
+                    .font(.system(size: 12.5))
+                    .foregroundStyle(NV.secondary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.bottom, 6)
+    }
+
+    /// Selection chrome shared by all four picker grids (HUD style, chrome,
+    /// theme, subtitle) -- they were four copies of the same border logic.
+    private func tileChrome<Content: View>(
+        selected: Bool,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        content()
+            .frame(maxWidth: .infinity)
+            .padding(12)
+            .background(
+                selected ? NV.selected : NV.card,
+                in: RoundedRectangle(cornerRadius: 12, style: .continuous)
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .stroke(selected ? NV.blue : NV.hairline, lineWidth: selected ? 1.5 : 1)
+            }
+    }
+
+    private func tileLabel(_ title: String, selected: Bool) -> some View {
+        Text(title)
+            .font(.system(size: 12, weight: .semibold))
+            .foregroundStyle(selected ? NV.blue : NV.ink)
+            .lineLimit(1)
+    }
+
+    /// The HUD always renders on a dark capsule, so its previews keep a fixed
+    /// dark plate regardless of the app theme.
+    private var hudPlate: LinearGradient {
+        LinearGradient(
+            colors: [Color(red: 0.12, green: 0.13, blue: 0.17), Color(red: 0.08, green: 0.09, blue: 0.12)],
+            startPoint: .top,
+            endPoint: .bottom
+        )
     }
 
     private func settingsRow<T: View>(
@@ -1286,6 +1417,7 @@ private struct SettingsPage: View {
             Toggle("", isOn: isOn)
                 .labelsHidden()
                 .toggleStyle(.switch)
+                .tint(NV.blue)
         }
         .padding(.vertical, 12)
     }
