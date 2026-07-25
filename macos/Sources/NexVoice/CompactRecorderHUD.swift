@@ -207,6 +207,22 @@ struct HUDVisualization: View {
                 AuroraRibbon(levels: levels)
             case .mono:
                 MonoLevelMeter(levels: levels)
+            case .siri:
+                SiriOrb(level: levels.last ?? 0)
+            case .quantum:
+                QuantumOrb(level: levels.last ?? 0)
+            case .ripple:
+                MinimalistRipple(level: levels.last ?? 0)
+            case .spectrum:
+                PrecisionWaveform(levels: levels)
+            case .amber:
+                AmberResonance(level: levels.last ?? 0)
+            case .sketch:
+                PencilSketch(level: levels.last ?? 0)
+            case .incense:
+                ZenIncense(level: levels.last ?? 0)
+            case .dots:
+                MinimalDots(levels: levels)
             }
         }
         .frame(width: 64, height: 22)

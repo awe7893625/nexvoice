@@ -15,6 +15,14 @@ enum HUDStyle: String, CaseIterable, Codable, Sendable {
     case ink
     case aurora
     case mono
+    case siri
+    case quantum
+    case ripple
+    case spectrum
+    case amber
+    case sketch
+    case incense
+    case dots
 
     var displayName: String {
         switch self {
@@ -22,6 +30,14 @@ enum HUDStyle: String, CaseIterable, Codable, Sendable {
         case .ink: "墨韻"
         case .aurora: "極光"
         case .mono: "羽量"
+        case .siri: "光球"
+        case .quantum: "量子"
+        case .ripple: "漣漪"
+        case .spectrum: "頻譜"
+        case .amber: "暖香"
+        case .sketch: "素描"
+        case .incense: "燼香"
+        case .dots: "圓點"
         }
     }
 }
