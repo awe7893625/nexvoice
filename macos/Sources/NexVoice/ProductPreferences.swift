@@ -78,6 +78,22 @@ enum HUDChrome: String, CaseIterable, Codable, Sendable {
     }
 }
 
+/// Overall app window theme. `pristine` is the original light UI; `studio`
+/// mirrors the ChatGPT design-lab warm paper look; `obsidian` is its dark twin.
+enum AppTheme: String, CaseIterable, Codable, Sendable {
+    case pristine
+    case studio
+    case obsidian
+
+    var displayName: String {
+        switch self {
+        case .pristine: "純淨"
+        case .studio: "設計工房"
+        case .obsidian: "曜石"
+        }
+    }
+}
+
 /// Visual treatment for the live-caption text itself (separate from HUDStyle,
 /// which only controls the small waveform/orb indicator). `.bubble` is the
 /// original single-capsule design and stays the default -- these are
@@ -113,11 +129,12 @@ struct ProductPreferences: Codable, Equatable, Sendable {
     var hudChrome: HUDChrome = .borderless
     var liveCaptionsEnabled = true
     var subtitleStyle: SubtitleStyle = .bubble
+    var appTheme: AppTheme = .pristine
 
     private enum CodingKeys: String, CodingKey {
         case dictate, translate, ask, interfaceLanguage, translationTarget
         case interactionSounds, muteOtherAudio, showDockIcon
-        case hudStyle, hudChrome, liveCaptionsEnabled, subtitleStyle
+        case hudStyle, hudChrome, liveCaptionsEnabled, subtitleStyle, appTheme
     }
 
     init() {}
@@ -138,6 +155,7 @@ struct ProductPreferences: Codable, Equatable, Sendable {
         hudChrome = try values.decodeIfPresent(HUDChrome.self, forKey: .hudChrome) ?? .borderless
         liveCaptionsEnabled = try values.decodeIfPresent(Bool.self, forKey: .liveCaptionsEnabled) ?? true
         subtitleStyle = try values.decodeIfPresent(SubtitleStyle.self, forKey: .subtitleStyle) ?? .bubble
+        appTheme = try values.decodeIfPresent(AppTheme.self, forKey: .appTheme) ?? .pristine
     }
 }
 

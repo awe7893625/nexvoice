@@ -33,6 +33,7 @@ final class AppModel: ObservableObject {
     @Published var productPreferences: ProductPreferences {
         didSet {
             ProductPreferencesStore.save(productPreferences, defaults)
+            NV.theme = productPreferences.appTheme
             runtime.updateHUDPreferences(
                 style: productPreferences.hudStyle,
                 chrome: productPreferences.hudChrome,
@@ -136,7 +137,9 @@ final class AppModel: ObservableObject {
             ?? LocalRuntimeConfiguration.defaultModel
         self.localEndpoint = defaults.string(forKey: LocalRuntimeConfiguration.endpointKey)
             ?? LocalRuntimeConfiguration.defaultEndpoint
-        self.productPreferences = ProductPreferencesStore.load(defaults)
+        let loadedPreferences = ProductPreferencesStore.load(defaults)
+        self.productPreferences = loadedPreferences
+        NV.theme = loadedPreferences.appTheme
         self.runtime = VoiceRuntimeController()
         runtime.updateHotkeyProfile(hotkeyProfile)
         runtime.updateHUDPreferences(

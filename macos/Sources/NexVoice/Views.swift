@@ -159,6 +159,7 @@ struct DashboardView: View {
             model.reloadHistory()
             model.reloadVocab()
         }
+        .id(model.productPreferences.appTheme)
     }
 
 }
@@ -949,6 +950,67 @@ private struct SettingsPage: View {
                                 .overlay {
                                     RoundedRectangle(cornerRadius: 12, style: .continuous)
                                         .stroke(model.productPreferences.hudChrome == chrome ? NV.blue : NV.hairline, lineWidth: model.productPreferences.hudChrome == chrome ? 1.5 : 1)
+                                }
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(.top, 4)
+                }
+                .nvCard()
+
+                VStack(alignment: .leading, spacing: 16) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("外觀主題")
+                            .font(.system(size: 15, weight: .bold))
+                            .foregroundStyle(NV.ink)
+                        Text("整個 App 視窗的配色風格")
+                            .font(.system(size: 12.5))
+                            .foregroundStyle(NV.secondary)
+                    }
+
+                    LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 12), count: 3), spacing: 12) {
+                        ForEach(AppTheme.allCases, id: \.self) { theme in
+                            let swatch = nvPreviewPalette(for: theme)
+                            Button {
+                                model.productPreferences.appTheme = theme
+                            } label: {
+                                VStack(spacing: 10) {
+                                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                        .fill(swatch.bg)
+                                        .overlay(alignment: .topLeading) {
+                                            RoundedRectangle(cornerRadius: 4, style: .continuous)
+                                                .fill(swatch.card)
+                                                .frame(width: 28, height: 18)
+                                                .padding(6)
+                                        }
+                                        .overlay(alignment: .bottomTrailing) {
+                                            Circle()
+                                                .fill(swatch.accent)
+                                                .frame(width: 12, height: 12)
+                                                .padding(6)
+                                        }
+                                        .overlay(
+                                            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                                .stroke(NV.hairline, lineWidth: 1)
+                                        )
+                                        .frame(maxWidth: .infinity)
+                                        .frame(height: 50)
+
+                                    Text(theme.displayName)
+                                        .font(.system(size: 12, weight: .semibold))
+                                        .foregroundStyle(model.productPreferences.appTheme == theme ? NV.blue : NV.ink)
+                                        .lineLimit(1)
+                                }
+                                .frame(maxWidth: .infinity)
+                                .padding(12)
+                                .background(
+                                    model.productPreferences.appTheme == theme ? NV.selected : NV.card,
+                                    in: RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                )
+                                .overlay {
+                                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                        .stroke(model.productPreferences.appTheme == theme ? NV.blue : NV.hairline, lineWidth: model.productPreferences.appTheme == theme ? 1.5 : 1)
                                 }
                             }
                             .buttonStyle(.plain)

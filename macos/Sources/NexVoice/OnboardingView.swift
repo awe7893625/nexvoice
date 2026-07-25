@@ -73,6 +73,7 @@ struct OnboardingView: View {
                 }
             }
         }
+        .id(model.productPreferences.appTheme)
     }
 
     private var progress: some View {
