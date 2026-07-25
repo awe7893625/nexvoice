@@ -1,9 +1,12 @@
 import CoreGraphics
 import Foundation
 
-// Prints the CGWindowID of the largest on-screen window owned by argv[1].
+// Prints the CGWindowID of the largest on-screen window owned by argv[1]
+// whose width falls within [minWidth, maxWidth]. The upper bound is what
+// lets you target the small floating HUD panel while the main window is open.
 let owner = CommandLine.arguments.count > 1 ? CommandLine.arguments[1] : "NexVoice"
 let minW = CommandLine.arguments.count > 2 ? Double(CommandLine.arguments[2]) ?? 400 : 400
+let maxW = CommandLine.arguments.count > 3 ? Double(CommandLine.arguments[3]) ?? .infinity : .infinity
 
 guard let list = CGWindowListCopyWindowInfo(
     [.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID
@@ -19,7 +22,7 @@ for w in list {
           let bounds = CGRect(dictionaryRepresentation: boundsDict as CFDictionary),
           let number = w[kCGWindowNumber as String] as? Int
     else { continue }
-    if Double(bounds.width) < minW { continue }
+    if Double(bounds.width) < minW || Double(bounds.width) > maxW { continue }
     let area = Double(bounds.width * bounds.height)
     let desc = "\(Int(bounds.width))x\(Int(bounds.height))@\(Int(bounds.minX)),\(Int(bounds.minY))"
     if best == nil || area > best!.0 { best = (area, number, desc) }

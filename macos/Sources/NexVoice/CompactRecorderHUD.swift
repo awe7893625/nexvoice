@@ -7,6 +7,12 @@ final class CompactRecorderHUD {
     private var subtitlePanel: NSPanel?
     private var meterTimer: Timer?
     private var smoothedLevel = 0.05
+    /// Running estimate of the room's quiet level, subtracted before the HUD
+    /// sees anything. Without it the mic's room tone alone sits high enough to
+    /// keep every style moving, which is indistinguishable from ignoring the
+    /// voice entirely.
+    private var noiseFloor = 0.25
+    private var historyTick = 0
     private let model = RecorderHUDModel()
     private var liveCaptionsEnabled = true
     var meterProvider: (() -> Double)?
@@ -114,17 +120,36 @@ final class CompactRecorderHUD {
 
     private func startMetering() {
         stopMetering()
-        meterTimer = Timer.scheduledTimer(withTimeInterval: 0.08, repeats: true) { [weak self] _ in
+        // 25 Hz: the animation phase is integrated on every tick so motion
+        // stays smooth, while the level history still advances every other
+        // tick to keep its original 0.08s cadence.
+        let interval = 0.04
+        historyTick = 0
+        meterTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 guard let self else { return }
                 let raw = max(0, min(1, self.meterProvider?() ?? 0))
+
+                // Settle onto a quiet room quickly, creep up under sustained
+                // sound only very slowly, so speech is never gated away.
+                let track = raw < self.noiseFloor ? 0.35 : 0.0008
+                self.noiseFloor = min(0.6, max(0, self.noiseFloor + (raw - self.noiseFloor) * track))
+                let span = max(0.20, 1 - self.noiseFloor - 0.05)
+                let voiced = max(0, raw - self.noiseFloor - 0.04) / span
+
                 // Fast attack makes syllables visible; slower decay avoids
                 // twitching while still settling between phrases.
-                let response = raw > self.smoothedLevel ? 0.72 : 0.24
-                self.smoothedLevel += (raw - self.smoothedLevel) * response
-                self.model.level = max(0.035, min(1, self.smoothedLevel))
-                self.model.levels.removeFirst()
-                self.model.levels.append(self.model.level)
+                let response = voiced > self.smoothedLevel ? 0.72 : 0.24
+                self.smoothedLevel += (voiced - self.smoothedLevel) * response
+                let level = max(0, min(1, self.smoothedLevel))
+                self.model.level = level
+                self.model.phase += interval * nexVoiceHUDMotionRate(level: level)
+
+                self.historyTick += 1
+                if self.historyTick.isMultiple(of: 2) {
+                    self.model.levels.removeFirst()
+                    self.model.levels.append(max(0.035, level))
+                }
             }
         }
         if let meterTimer { RunLoop.main.add(meterTimer, forMode: .common) }
@@ -140,6 +165,9 @@ final class CompactRecorderHUD {
 private final class RecorderHUDModel: ObservableObject {
     @Published var level: Double = 0.1
     @Published var levels = Array(repeating: 0.04, count: 11)
+    /// Voice-integrated animation phase handed to every style via
+    /// `\.hudPhase`; advances fast while speaking, barely at all in silence.
+    @Published var phase: Double = 0
     @Published var isBusy = false
     @Published var statusText = "Thinking…"
     @Published var partialText = ""
@@ -169,6 +197,7 @@ private struct CompactRecorderView: View {
             }
         }
         .frame(width: 148, height: 80)
+        .environment(\.hudPhase, model.phase)
     }
 
     @ViewBuilder private var platedContent: some View {
@@ -208,13 +237,14 @@ private struct CompactRecorderView: View {
 /// white bars with bloom, heights mixing live level, per-bar phase motion
 /// and a center-weighted envelope so the cluster breathes like Siri's.
 private struct GlassBars: View {
+    @Environment(\.hudPhase) private var hudPhase
     let levels: [Double]
 
     private static let barCount = 23
 
     var body: some View {
         TimelineView(.animation(minimumInterval: 0.04)) { context in
-            let t = nexVoiceHUDTime(context.date)
+            let t = hudPhase
             let level = levels.last ?? 0
             let energy = 0.22 + min(1, level) * 0.78
             HStack(alignment: .center, spacing: 1.3) {
@@ -485,11 +515,12 @@ struct HUDVisualization: View {
 
 /// “墨韻” (ink) —— 宣紙邊上呼吸的一筆墨：暖米紙半透明卡、單筆變寬墨帶。
 private struct InkStroke: View {
+    @Environment(\.hudPhase) private var hudPhase
     let levels: [Double]
 
     var body: some View {
         TimelineView(.animation(minimumInterval: 0.05)) { context in
-            let t = nexVoiceHUDTime(context.date)
+            let t = hudPhase
             let maxLevel = levels.max() ?? 0
             let baseThickness = 2.2
             let thicknessVariation = 0.62
@@ -546,6 +577,7 @@ private struct InkStroke: View {
 
 /// “極光” (aurora) —— 極夜天空下的一條光帶：近黑深藍玻璃、青→紫→洋紅漸層絲帶波形。
 private struct AuroraRibbon: View {
+    @Environment(\.hudPhase) private var hudPhase
     let levels: [Double]
 
     private static let gradientColors: [Color] = [
@@ -556,7 +588,7 @@ private struct AuroraRibbon: View {
 
     var body: some View {
         TimelineView(.animation(minimumInterval: 0.03)) { (context: TimelineViewDefaultContext) in
-            auroraCanvas(t: nexVoiceHUDTime(context.date))
+            auroraCanvas(t: hudPhase)
         }
     }
 
@@ -604,6 +636,7 @@ private struct AuroraRibbon: View {
 /// "精準頻譜" (Precision Waveform): seven bars with a per-bar staggered
 /// bounce, green/purple jewel tones, height also driven by real voice level.
 private struct PrecisionWaveform: View {
+    @Environment(\.hudPhase) private var hudPhase
     let levels: [Double]
 
     private static let colors: [Color] = [
@@ -616,7 +649,7 @@ private struct PrecisionWaveform: View {
 
     var body: some View {
         TimelineView(.animation(minimumInterval: 0.05)) { context in
-            let t = nexVoiceHUDTime(context.date)
+            let t = hudPhase
             let level = levels.last ?? 0
             HStack(alignment: .center, spacing: 3) {
                 ForEach(0..<7, id: \.self) { index in
@@ -638,11 +671,12 @@ private struct PrecisionWaveform: View {
 /// The previous version was driven purely by audio level, so during a quiet
 /// moment (or before the meter had a sample) it visibly froze.
 private struct SiriOrb: View {
+    @Environment(\.hudPhase) private var hudPhase
     let level: Double
 
     var body: some View {
         TimelineView(.animation(minimumInterval: 0.03)) { context in
-            let t = nexVoiceHUDTime(context.date)
+            let t = hudPhase
             let breathe = 0.5 + 0.5 * sin(t * 1.7)
             let energy = 0.4 + level * 0.9
             let size = 15 + breathe * 4 + level * 7
@@ -680,6 +714,7 @@ private struct SiriOrb: View {
 /// frequencies/speeds/phases, tapered flat at both ends, with a gentle
 /// always-alive floor so it's never a dead flat line even in silence.
 private struct WaterWave: View {
+    @Environment(\.hudPhase) private var hudPhase
     private struct Layer {
         let frequency: Double
         let speed: Double
@@ -701,7 +736,7 @@ private struct WaterWave: View {
 
     var body: some View {
         TimelineView(.animation(minimumInterval: 0.03)) { context in
-            let t = nexVoiceHUDTime(context.date)
+            let t = hudPhase
             let voiceLevel = levels.last ?? 0
             let synthFloor = 0.05 + 0.05 * abs(sin(t * 0.8))
             let level = max(voiceLevel, synthFloor)
@@ -997,11 +1032,12 @@ private func nexVoiceSmoothWavePath(size: CGSize, t: Double, energy: Double, amp
 /// bright main wave with a fainter blue secondary wave riding under it, and
 /// three small pulsing dots along the left edge.
 private struct FloatVoice: View {
+    @Environment(\.hudPhase) private var hudPhase
     let levels: [Double]
 
     var body: some View {
         TimelineView(.animation(minimumInterval: 0.03)) { context in
-            let t = nexVoiceHUDTime(context.date)
+            let t = hudPhase
             let voiceLevel = levels.last ?? 0
             let synthFloor = 0.05 + 0.05 * abs(sin(t * 0.8))
             let energy = max(voiceLevel, synthFloor)
@@ -1046,6 +1082,7 @@ private struct FloatVoice: View {
 /// around a bright core orb, with a soft arc highlight and drifting outer
 /// rings.
 private struct PrismCore: View {
+    @Environment(\.hudPhase) private var hudPhase
     let levels: [Double]
 
     private static let blobColors: [Color] = [
@@ -1062,7 +1099,7 @@ private struct PrismCore: View {
 
     var body: some View {
         TimelineView(.animation(minimumInterval: 0.03)) { context in
-            let t = nexVoiceHUDTime(context.date)
+            let t = hudPhase
             let energy = levels.last ?? 0
             let size: CGFloat = 20
             let baseRadius = size * (0.42 + energy * 0.09 + 0.03 * sin(t * 2))
@@ -1112,6 +1149,7 @@ private struct PrismCore: View {
 /// thick amber wave with a thinner rose wave riding underneath, and a
 /// handful of rising spark particles.
 private struct Ember: View {
+    @Environment(\.hudPhase) private var hudPhase
     let levels: [Double]
 
     private static let glowPoints: [(x: Double, y: Double, color: Color, radius: Double)] = [
@@ -1122,7 +1160,7 @@ private struct Ember: View {
 
     var body: some View {
         TimelineView(.animation(minimumInterval: 0.03)) { context in
-            let t = nexVoiceHUDTime(context.date)
+            let t = hudPhase
             let voiceLevel = levels.last ?? 0
             let synthFloor = 0.05 + 0.05 * abs(sin(t * 0.8))
             let energy = max(voiceLevel, synthFloor)
@@ -1171,11 +1209,51 @@ private struct Ember: View {
 /// (彗尾/雙螺旋/水銀) -- mirrors GlassBars' `0.45 + level*0.55` pattern so
 /// silence never reads as a dead/frozen indicator: a slow breathing term
 /// keeps power at 0.40+ even at level 0, rising toward 1.0 with real voice.
-/// Global animation clock for every HUD visualization. Real time is scaled
-/// down so motion reads as calm breathing rather than frantic jitter; energy
-/// (not speed) is what voice level modulates.
+/// Animation clock for the capsule chrome and the caption cursor only --
+/// frame shimmer and the "thinking" sweep report processing, not speech, so
+/// they stay on the wall clock. Every waveform style instead reads
+/// `\.hudPhase`, which only advances when there is something to hear.
 private func nexVoiceHUDTime(_ date: Date) -> Double {
     date.timeIntervalSinceReferenceDate * 0.55
+}
+
+/// How fast a HUD's animation phase advances at a given voice level.
+///
+/// Previously every style ran off the wall clock, so scans swept, comets
+/// cruised and bars wobbled at exactly the same speed whether you were
+/// talking or the room was silent -- the level only scaled amplitude. Motion
+/// now comes from the voice: near-still when quiet, lively when loud. Kept
+/// linear in `level` so the settings previews can integrate it in closed form.
+func nexVoiceHUDMotionRate(level: Double) -> Double {
+    0.10 + 1.35 * min(1, max(0, level))
+}
+
+/// Synthetic (level, phase) pair for the settings previews, which have no
+/// microphone. Uses the very same motion law fed by a breathing envelope, so
+/// a tile in the grid demonstrates how that style will actually behave --
+/// slowing as the breath falls, quickening as it rises.
+///
+/// `phase` is the analytic integral of `nexVoiceHUDMotionRate` over
+/// `level(t) = 0.5 + 0.5·sin(wt)`, so no timer state is needed and the
+/// result is monotonic (its derivative bottoms out at the 0.10 idle rate).
+func nexVoiceHUDPreviewSignal(at time: Double) -> (level: Double, phase: Double) {
+    let w = 0.55
+    let level = 0.5 + 0.5 * sin(time * w)
+    let phase = 0.775 * time - (0.675 / w) * cos(time * w)
+    return (level, phase)
+}
+
+private struct HUDPhaseKey: EnvironmentKey {
+    static let defaultValue: Double = 0
+}
+
+extension EnvironmentValues {
+    /// Voice-integrated animation phase, in the same units the styles used to
+    /// get from the wall clock.
+    var hudPhase: Double {
+        get { self[HUDPhaseKey.self] }
+        set { self[HUDPhaseKey.self] = newValue }
+    }
 }
 
 private func nexVoiceHUDLabPower(t: Double, level: Double) -> (power: Double, bloom: Double) {
@@ -1193,11 +1271,12 @@ private func nexVoiceHUDLabPower(t: Double, level: Double) -> (power: Double, bl
 /// stroke underneath the bright core stroke, matching this file's existing
 /// Canvas-glow convention (see InkStroke/WaterWave) rather than GraphicsContext filters.
 private struct CometTrail: View {
+    @Environment(\.hudPhase) private var hudPhase
     let levels: [Double]
 
     var body: some View {
         TimelineView(.animation(minimumInterval: 0.03)) { context in
-            let t = nexVoiceHUDTime(context.date)
+            let t = hudPhase
             let voiceLevel = levels.last ?? 0
             let (power, bloom) = nexVoiceHUDLabPower(t: t, level: voiceLevel)
 
@@ -1291,11 +1370,12 @@ private struct CometTrail: View {
 /// strands. Each band gets the same halo+gradient double-stroke treatment
 /// as CometTrail.
 private struct Helix: View {
+    @Environment(\.hudPhase) private var hudPhase
     let levels: [Double]
 
     var body: some View {
         TimelineView(.animation(minimumInterval: 0.03)) { context in
-            let t = nexVoiceHUDTime(context.date)
+            let t = hudPhase
             let voiceLevel = levels.last ?? 0
             let (power, bloom) = nexVoiceHUDLabPower(t: t, level: voiceLevel)
 
@@ -1399,11 +1479,12 @@ private struct Helix: View {
 /// bright top-edge stroke, a screen-blended mirror-sheen band sweeping
 /// across the body, and a small orbiting highlight bead riding inside.
 private struct Mercury: View {
+    @Environment(\.hudPhase) private var hudPhase
     let levels: [Double]
 
     var body: some View {
         TimelineView(.animation(minimumInterval: 0.03)) { context in
-            let t = nexVoiceHUDTime(context.date)
+            let t = hudPhase
             let voiceLevel = levels.last ?? 0
             let (power, bloom) = nexVoiceHUDLabPower(t: t, level: voiceLevel)
 
@@ -1507,11 +1588,12 @@ private struct Mercury: View {
 /// pulse head, and a bright bloom dot riding at the head -- mirrors the
 /// halo+gradient double-stroke bloom convention used by CometTrail/Helix/Mercury.
 private struct EKG: View {
+    @Environment(\.hudPhase) private var hudPhase
     let levels: [Double]
 
     var body: some View {
         TimelineView(.animation(minimumInterval: 0.03)) { context in
-            let t = nexVoiceHUDTime(context.date)
+            let t = hudPhase
             let voiceLevel = levels.last ?? 0
             let (power, bloom) = nexVoiceHUDLabPower(t: t, level: voiceLevel)
 
@@ -1624,12 +1706,13 @@ private struct EKG: View {
 /// from the mockup's 8 to 6 (perf, matches CometTrail's own 9->6 reduction)
 /// with larger radius/alpha to keep the density feel.
 private struct MeteorShower: View {
+    @Environment(\.hudPhase) private var hudPhase
     let levels: [Double]
     private static let count = 3
 
     var body: some View {
         TimelineView(.animation(minimumInterval: 0.03)) { context in
-            let t = nexVoiceHUDTime(context.date)
+            let t = hudPhase
             let voiceLevel = levels.last ?? 0
             let (power, bloom) = nexVoiceHUDLabPower(t: t, level: voiceLevel)
 
@@ -1723,11 +1806,12 @@ private struct MeteorShower: View {
 /// bright bloom node at each end, and a small node marker sweeping back and
 /// forth along the arc.
 private struct Plasma: View {
+    @Environment(\.hudPhase) private var hudPhase
     let levels: [Double]
 
     var body: some View {
         TimelineView(.animation(minimumInterval: 0.03)) { context in
-            let t = nexVoiceHUDTime(context.date)
+            let t = hudPhase
             let voiceLevel = levels.last ?? 0
             let (power, bloom) = nexVoiceHUDLabPower(t: t, level: voiceLevel)
 
@@ -1832,11 +1916,12 @@ private struct Plasma: View {
 /// width (not tapered fully to the edges) so idle silence still reads as a
 /// wide, present ribbon rather than a pinched flat line.
 private struct Silk: View {
+    @Environment(\.hudPhase) private var hudPhase
     let levels: [Double]
 
     var body: some View {
         TimelineView(.animation(minimumInterval: 0.03)) { context in
-            let t = nexVoiceHUDTime(context.date)
+            let t = hudPhase
             let voiceLevel = levels.last ?? 0
             let (power, bloom) = nexVoiceHUDLabPower(t: t, level: voiceLevel)
 
@@ -1902,12 +1987,13 @@ private struct Silk: View {
 /// count reduced from the mockup's 12 to 9 (perf, matches CometTrail's own
 /// 9->6 reduction) with larger radius/alpha to keep the density feel.
 private struct Cascade: View {
+    @Environment(\.hudPhase) private var hudPhase
     let levels: [Double]
     private static let count = 9
 
     var body: some View {
         TimelineView(.animation(minimumInterval: 0.03)) { context in
-            let t = nexVoiceHUDTime(context.date)
+            let t = hudPhase
             let voiceLevel = levels.last ?? 0
             let (power, bloom) = nexVoiceHUDLabPower(t: t, level: voiceLevel)
 
@@ -1978,11 +2064,12 @@ private struct Cascade: View {
 /// centered, ringed by a bright eclipse-ring stroke (the halo+gradient
 /// bloom convention shared with CometTrail/Helix/Mercury).
 private struct Eclipse: View {
+    @Environment(\.hudPhase) private var hudPhase
     let levels: [Double]
 
     var body: some View {
         TimelineView(.animation(minimumInterval: 0.03)) { context in
-            let t = nexVoiceHUDTime(context.date)
+            let t = hudPhase
             let voiceLevel = levels.last ?? 0
             let (power, bloom) = nexVoiceHUDLabPower(t: t, level: voiceLevel)
 

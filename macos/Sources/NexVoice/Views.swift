@@ -1055,18 +1055,24 @@ private struct SettingsPage: View {
                     } label: {
                         tileChrome(selected: model.productPreferences.hudStyle == style) {
                             VStack(spacing: 10) {
-                                TimelineView(.animation(minimumInterval: 0.06)) { context in
-                                    let t = context.date.timeIntervalSinceReferenceDate
-                                    // Calm speech-like preview: a slow breath with occasional
-                                    // gentle swells, never the frantic full-range pumping that
-                                    // made the whole grid feel jittery.
-                                    let synthetic: [Double] = (0..<11).map { i -> Double in
-                                        let di = Double(i)
-                                        let breath: Double = 0.5 + 0.5 * sin(t * 0.55 + di * 0.3)
-                                        let swell: Double = max(0, sin(t * 0.23))
-                                        return 0.14 + 0.10 * breath + 0.22 * swell
+                                TimelineView(.animation(minimumInterval: 0.04)) { context in
+                                    // No microphone here, so drive the tile from the
+                                    // same motion law the live HUD uses, fed by a
+                                    // synthetic breath: the preview then shows the
+                                    // real behaviour -- slow when quiet, lively when
+                                    // loud -- instead of a constant-speed animation.
+                                    let signal = nexVoiceHUDPreviewSignal(
+                                        at: context.date.timeIntervalSinceReferenceDate
+                                    )
+                                    let synthetic: [Double] = (0..<11).map { i in
+                                        // Trailing history: older samples lag the breath.
+                                        let lag = Double(10 - i) * 0.09
+                                        return nexVoiceHUDPreviewSignal(
+                                            at: context.date.timeIntervalSinceReferenceDate - lag
+                                        ).level
                                     }
                                     HUDVisualization(style: style, levels: synthetic)
+                                        .environment(\.hudPhase, signal.phase)
                                 }
                                 .frame(width: 110, height: 50)
                                 .frame(maxWidth: .infinity)

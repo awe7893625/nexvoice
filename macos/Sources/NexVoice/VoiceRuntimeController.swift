@@ -203,11 +203,20 @@ final class VoiceRuntimeController {
     }
 
     func previewCompactHUD(thinking: Bool = false, duration: TimeInterval = 3) {
+        // No recorder runs during a preview, so the real meter would report
+        // silence -- and since motion now follows the voice, the HUD would sit
+        // still and the screenshot loop would show nothing. Feed it the same
+        // synthetic breath the settings tiles use.
+        hud.meterProvider = {
+            nexVoiceHUDPreviewSignal(at: Date().timeIntervalSinceReferenceDate).level
+        }
         hud.show()
         if thinking { hud.showBusy() }
         Task { [weak self] in
             try? await Task.sleep(for: .seconds(duration))
-            self?.hud.hide()
+            guard let self else { return }
+            self.hud.hide()
+            self.hud.meterProvider = { [weak self] in self?.recorder.meterLevel() ?? 0 }
         }
     }
 
