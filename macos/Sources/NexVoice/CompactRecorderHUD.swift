@@ -281,6 +281,18 @@ struct HUDVisualization: View {
                 ZenIncense(level: levels.last ?? 0)
             case .dots:
                 MinimalDots(levels: levels)
+            case .floatVoice:
+                FloatVoice(levels: levels)
+            case .prismCore:
+                PrismCore(levels: levels)
+            case .pulseField:
+                PulseField(levels: levels)
+            case .stardust:
+                Stardust(levels: levels)
+            case .frost:
+                Frost(levels: levels)
+            case .ember:
+                Ember(levels: levels)
             }
         }
         .frame(width: 64, height: 22)
@@ -1017,6 +1029,393 @@ private struct ZenIncense: View {
                     .shadow(color: Self.emberColor.opacity(0.6), radius: 2)
             }
             .frame(width: 20, height: 22, alignment: .bottom)
+        }
+    }
+}
+
+/// Deterministic hash used by the ports below (星塵/霜息/赤霞) -- mirrors the
+/// ChatGPT HUD-pack mockup's `seeded(n)` so particle/crystal positions are
+/// stable across frames instead of flickering like Double.random would.
+private func nexVoiceSeeded(_ seed: Double) -> Double {
+    abs(sin(seed * 12.9898 + 78.233) * 43758.5453).truncatingRemainder(dividingBy: 1)
+}
+
+/// Shared multi-harmonic wave path used by 浮聲/脈界/霜息/赤霞 -- ports the
+/// mockup's `drawSmoothWave` helper (three summed sine terms tapered to flat
+/// at both ends) so each variant only supplies its own color/amplitude/frequency/phase.
+private func nexVoiceSmoothWavePath(size: CGSize, t: Double, energy: Double, amplitude: Double, frequency: Double, phase: Double) -> Path {
+    var path = Path()
+    let centerY = size.height / 2
+    let start = size.width * 0.1
+    let span = size.width * 0.8
+    let breath = 0.1 + energy * 0.9
+    for i in 0...60 {
+        let p = Double(i) / 60
+        let envelope = pow(sin(p * .pi), 0.72)
+        let wave = sin(p * .pi * frequency + t * 2.7 + phase) * 0.64
+            + sin(p * .pi * (frequency * 1.87) - t * 1.9 + phase * 0.7) * 0.24
+            + sin(p * .pi * 0.8 + t * 0.8) * 0.12
+        let y = centerY + wave * amplitude * envelope * breath
+        let x = start + CGFloat(p) * span
+        let point = CGPoint(x: x, y: y)
+        if i == 0 { path.move(to: point) } else { path.addLine(to: point) }
+    }
+    return path
+}
+
+/// "浮聲" (Float Voice) -- ultra-thin borderless float: a soft white glow, a
+/// bright main wave with a fainter blue secondary wave riding under it, and
+/// three small pulsing dots along the left edge.
+private struct FloatVoice: View {
+    let levels: [Double]
+
+    var body: some View {
+        TimelineView(.animation(minimumInterval: 0.03)) { context in
+            let t = context.date.timeIntervalSinceReferenceDate
+            let voiceLevel = levels.last ?? 0
+            let synthFloor = 0.05 + 0.05 * abs(sin(t * 0.8))
+            let energy = max(voiceLevel, synthFloor)
+
+            Canvas { canvas, size in
+                canvas.fill(
+                    Path(CGRect(origin: .zero, size: size)),
+                    with: .radialGradient(
+                        Gradient(colors: [.white.opacity(0.06 + energy * 0.07), .white.opacity(0)]),
+                        center: CGPoint(x: size.width / 2, y: size.height / 2),
+                        startRadius: 0,
+                        endRadius: size.width * 0.5
+                    )
+                )
+
+                canvas.stroke(
+                    nexVoiceSmoothWavePath(size: size, t: t, energy: energy, amplitude: size.height * 0.4, frequency: 3.2, phase: 0.6),
+                    with: .color(.white.opacity(0.96)),
+                    style: StrokeStyle(lineWidth: 1.8, lineCap: .round, lineJoin: .round)
+                )
+                canvas.stroke(
+                    nexVoiceSmoothWavePath(size: size, t: t + 0.12, energy: energy * 0.82, amplitude: size.height * 0.33, frequency: 4.6, phase: 2.1),
+                    with: .color(Color(red: 0.62, green: 0.78, blue: 1.0).opacity(0.5)),
+                    style: StrokeStyle(lineWidth: 1.1, lineCap: .round, lineJoin: .round)
+                )
+
+                for i in 0..<3 {
+                    let x = size.width * (0.12 + Double(i) * 0.032)
+                    let pulse = 0.55 + 0.45 * sin(t * 2.3 + Double(i))
+                    let r: CGFloat = 1.3 + 0.7 * pulse
+                    canvas.fill(
+                        Path(ellipseIn: CGRect(x: x - r, y: size.height / 2 - r, width: r * 2, height: r * 2)),
+                        with: .color(.white.opacity(0.7 + 0.2 * pulse))
+                    )
+                }
+            }
+        }
+    }
+}
+
+/// "虹核" (Prism Core) -- rainbow-tinted glow blobs orbiting additively
+/// around a bright core orb, with a soft arc highlight and drifting outer
+/// rings.
+private struct PrismCore: View {
+    let levels: [Double]
+
+    private static let blobColors: [Color] = [
+        Color(red: 0.28, green: 0.82, blue: 1.0),
+        Color(red: 0.40, green: 0.46, blue: 1.0),
+        Color(red: 0.75, green: 0.33, blue: 1.0),
+        Color(red: 1.0, green: 0.30, blue: 0.67),
+    ]
+    private static let ringColors: [Color] = [
+        Color(red: 0.56, green: 0.85, blue: 1.0),
+        Color(red: 0.75, green: 0.57, blue: 1.0),
+        Color(red: 1.0, green: 0.57, blue: 0.80),
+    ]
+
+    var body: some View {
+        TimelineView(.animation(minimumInterval: 0.03)) { context in
+            let t = context.date.timeIntervalSinceReferenceDate
+            let energy = levels.last ?? 0
+            let size: CGFloat = 20
+            let baseRadius = size * (0.42 + energy * 0.09 + 0.03 * sin(t * 2))
+
+            ZStack {
+                ForEach(Self.blobColors.indices, id: \.self) { i in
+                    let angle = t * (0.7 + Double(i) * 0.13) + Double(i) * 1.2
+                    let ox = cos(angle) * baseRadius * 0.34
+                    let oy = sin(angle * 1.1) * baseRadius * 0.31
+                    let radius = baseRadius * (1.0 - Double(i) * 0.08)
+                    Circle()
+                        .fill(RadialGradient(colors: [Self.blobColors[i].opacity(0.8), .clear], center: .center, startRadius: 0, endRadius: radius))
+                        .frame(width: radius * 2, height: radius * 2)
+                        .offset(x: ox, y: oy)
+                        .blendMode(.screen)
+                }
+
+                Circle()
+                    .fill(RadialGradient(
+                        colors: [.white, Color(red: 0.66, green: 0.89, blue: 1.0), Color(red: 0.42, green: 0.40, blue: 1.0), Color(red: 0.94, green: 0.29, blue: 0.75).opacity(0.7), .clear],
+                        center: UnitPoint(x: 0.36, y: 0.32),
+                        startRadius: 0,
+                        endRadius: baseRadius
+                    ))
+                    .frame(width: baseRadius * 2, height: baseRadius * 2)
+
+                Circle()
+                    .trim(from: 0.08, to: 0.42)
+                    .stroke(.white.opacity(0.44 + energy * 0.28), lineWidth: 1)
+                    .frame(width: baseRadius * 1.36, height: baseRadius * 1.36)
+                    .rotationEffect(.degrees(-20))
+
+                ForEach(Self.ringColors.indices, id: \.self) { ring in
+                    let r = baseRadius * (1.15 + Double(ring + 1) * 0.17 + 0.025 * sin(t * 2 + Double(ring + 1)))
+                    Circle()
+                        .stroke(Self.ringColors[ring], lineWidth: 0.8)
+                        .frame(width: r * 2, height: r * 2)
+                        .opacity(0.22)
+                }
+            }
+            .frame(width: size, height: size)
+        }
+    }
+}
+
+/// "脈界" (Pulse Field) -- a faint teal measurement grid with a horizontal
+/// sweep band scanning across it, a glowing waveform riding on top, and a
+/// thin row of jittering bars underneath for texture.
+private struct PulseField: View {
+    let levels: [Double]
+
+    var body: some View {
+        TimelineView(.animation(minimumInterval: 0.03)) { context in
+            let t = context.date.timeIntervalSinceReferenceDate
+            let voiceLevel = levels.last ?? 0
+            let synthFloor = 0.05 + 0.05 * abs(sin(t * 0.8))
+            let energy = max(voiceLevel, synthFloor)
+            let gridColor = Color(red: 0.46, green: 0.87, blue: 0.78)
+
+            Canvas { canvas, size in
+                let columns = 9
+                let rows = 4
+                for c in 0...columns {
+                    let x = size.width * CGFloat(c) / CGFloat(columns)
+                    canvas.stroke(Path { $0.move(to: CGPoint(x: x, y: 0)); $0.addLine(to: CGPoint(x: x, y: size.height)) },
+                                  with: .color(gridColor.opacity(0.12)), lineWidth: 0.5)
+                }
+                for r in 0...rows {
+                    let y = size.height * CGFloat(r) / CGFloat(rows)
+                    canvas.stroke(Path { $0.move(to: CGPoint(x: 0, y: y)); $0.addLine(to: CGPoint(x: size.width, y: y)) },
+                                  with: .color(gridColor.opacity(0.12)), lineWidth: 0.5)
+                }
+
+                let sweepX = CGFloat((t * 30).truncatingRemainder(dividingBy: Double(size.width) * 1.25) - Double(size.width) * 0.15)
+                let bandWidth = size.width * 0.16
+                canvas.fill(
+                    Path(CGRect(x: sweepX - bandWidth / 2, y: 0, width: bandWidth, height: size.height)),
+                    with: .linearGradient(
+                        Gradient(colors: [gridColor.opacity(0), gridColor.opacity(0.08 + energy * 0.2), gridColor.opacity(0)]),
+                        startPoint: CGPoint(x: sweepX - bandWidth / 2, y: 0),
+                        endPoint: CGPoint(x: sweepX + bandWidth / 2, y: 0)
+                    )
+                )
+
+                canvas.stroke(
+                    nexVoiceSmoothWavePath(size: size, t: t, energy: energy, amplitude: size.height * 0.4, frequency: 4.8, phase: 1.2),
+                    with: .color(gridColor.opacity(0.92)),
+                    style: StrokeStyle(lineWidth: 1.6, lineCap: .round, lineJoin: .round)
+                )
+
+                for i in 0..<20 {
+                    let p = Double(i) / 19
+                    let envelope = pow(sin(p * .pi), 0.7)
+                    let a = sin(t * 3.3 + Double(i) * 0.78 + 1.9)
+                    let b = sin(t * 5.1 - Double(i) * 0.43 + 1.33)
+                    let c = sin(t * 1.7 + Double(i) * 1.31)
+                    let signal = abs(a * 0.48 + b * 0.34 + c * 0.18)
+                    let magnitude = (0.08 + signal * energy * 0.7) * envelope
+                    let barHeight = max(1, size.height * 0.32 * CGFloat(magnitude))
+                    let x = size.width * CGFloat(0.08 + p * 0.84)
+                    canvas.fill(
+                        Path(CGRect(x: x - 0.5, y: size.height / 2 - barHeight / 2, width: 1, height: barHeight)),
+                        with: .color(gridColor.opacity(0.4))
+                    )
+                }
+            }
+        }
+    }
+}
+
+/// "星塵" (Stardust) -- particles seeded-orbit a soft core glow, colored in
+/// a cyan/violet/pink cycle and additively blended, with a faint wave
+/// riding through the middle.
+private struct Stardust: View {
+    let levels: [Double]
+
+    var body: some View {
+        TimelineView(.animation(minimumInterval: 0.03)) { context in
+            let t = context.date.timeIntervalSinceReferenceDate
+            let voiceLevel = levels.last ?? 0
+            let synthFloor = 0.05 + 0.05 * abs(sin(t * 0.8))
+            let energy = max(voiceLevel, synthFloor)
+            let spread = 0.35 + energy * 0.65
+
+            Canvas { canvas, size in
+                let cx = size.width / 2
+                let cy = size.height / 2
+
+                canvas.fill(
+                    Path(CGRect(origin: .zero, size: size)),
+                    with: .radialGradient(
+                        Gradient(colors: [Color(red: 0.5, green: 0.56, blue: 1.0).opacity(0.10 + energy * 0.12), .clear]),
+                        center: CGPoint(x: cx, y: cy),
+                        startRadius: 0,
+                        endRadius: size.width * 0.4
+                    )
+                )
+
+                canvas.blendMode = .screen
+                for i in 0..<36 {
+                    let baseAngle = nexVoiceSeeded(Double(i) * 2.17) * .pi * 2
+                    let orbit = nexVoiceSeeded(Double(i) * 7.31 + 2) * Double(size.width) * 0.42
+                    let speed = 0.12 + nexVoiceSeeded(Double(i) * 1.91 + 8) * 0.45
+                    let angle = baseAngle + t * speed * (i % 2 == 0 ? 1 : -1)
+                    let pulse = 0.6 + 0.4 * sin(t * (1.2 + speed) + Double(i))
+                    let radius = orbit * spread * (0.65 + 0.35 * pulse)
+                    let x = cx + CGFloat(cos(angle) * radius)
+                    let y = cy + CGFloat(sin(angle * 1.18) * radius * 0.35)
+                    let dotSize = CGFloat(0.7 + nexVoiceSeeded(Double(i) * 4.77) * 1.3 + energy * 0.6)
+                    let hue = i % 3
+                    let color: Color = hue == 0
+                        ? Color(red: 0.48, green: 0.87, blue: 1.0)
+                        : hue == 1 ? Color(red: 0.65, green: 0.54, blue: 1.0) : Color(red: 1.0, green: 0.47, blue: 0.84)
+                    canvas.fill(
+                        Path(ellipseIn: CGRect(x: x - dotSize, y: y - dotSize, width: dotSize * 2, height: dotSize * 2)),
+                        with: .color(color.opacity(0.24 + pulse * 0.72))
+                    )
+                }
+                canvas.blendMode = .normal
+
+                canvas.stroke(
+                    nexVoiceSmoothWavePath(size: size, t: t, energy: energy * 0.65, amplitude: size.height * 0.24, frequency: 3.4, phase: 2.7),
+                    with: .color(Color(red: 0.92, green: 0.94, blue: 1.0).opacity(0.76)),
+                    style: StrokeStyle(lineWidth: 0.9, lineCap: .round, lineJoin: .round)
+                )
+            }
+        }
+    }
+}
+
+/// "霜息" (Frost) -- a cool diagonal mist wash, a scattering of tiny rotating
+/// ice-crystal spokes, and two icy-blue glowing waves layered on top.
+private struct Frost: View {
+    let levels: [Double]
+
+    var body: some View {
+        TimelineView(.animation(minimumInterval: 0.03)) { context in
+            let t = context.date.timeIntervalSinceReferenceDate
+            let voiceLevel = levels.last ?? 0
+            let synthFloor = 0.05 + 0.05 * abs(sin(t * 0.8))
+            let energy = max(voiceLevel, synthFloor)
+
+            Canvas { canvas, size in
+                canvas.fill(
+                    Path(CGRect(origin: .zero, size: size)),
+                    with: .linearGradient(
+                        Gradient(colors: [
+                            Color(red: 0.87, green: 0.97, blue: 1.0).opacity(0.09),
+                            Color(red: 0.45, green: 0.82, blue: 1.0).opacity(0.03),
+                            Color(red: 0.71, green: 0.53, blue: 1.0).opacity(0.07),
+                        ]),
+                        startPoint: .zero,
+                        endPoint: CGPoint(x: size.width, y: size.height)
+                    )
+                )
+
+                for i in 0..<8 {
+                    let x = CGFloat(nexVoiceSeeded(Double(i) * 8.2)) * size.width
+                    let y = CGFloat(nexVoiceSeeded(Double(i) * 4.1 + 3)) * size.height
+                    let radius = size.height * CGFloat(0.16 + nexVoiceSeeded(Double(i) * 9.7) * 0.32)
+                    let arms = i % 2 == 0 ? 6 : 5
+                    let spin = t * 0.5 * (i % 2 == 0 ? 1 : -1)
+                    var crystal = Path()
+                    for a in 0..<arms {
+                        let armAngle = spin + Double(a) / Double(arms) * .pi * 2
+                        let dx = CGFloat(cos(armAngle))
+                        let dy = CGFloat(sin(armAngle))
+                        crystal.move(to: CGPoint(x: x, y: y))
+                        crystal.addLine(to: CGPoint(x: x + dx * radius, y: y + dy * radius))
+                    }
+                    canvas.stroke(crystal, with: .color(Color(red: 0.86, green: 0.97, blue: 1.0).opacity(0.24)), lineWidth: 0.6)
+                }
+
+                canvas.stroke(
+                    nexVoiceSmoothWavePath(size: size, t: t, energy: energy, amplitude: size.height * 0.42, frequency: 3.5, phase: 0.8),
+                    with: .color(Color(red: 0.79, green: 0.95, blue: 1.0).opacity(0.84)),
+                    style: StrokeStyle(lineWidth: 1.7, lineCap: .round, lineJoin: .round)
+                )
+                canvas.stroke(
+                    nexVoiceSmoothWavePath(size: size, t: t + 0.13, energy: energy * 0.7, amplitude: size.height * 0.29, frequency: 5.1, phase: 2.8),
+                    with: .color(Color(red: 0.57, green: 0.8, blue: 1.0).opacity(0.52)),
+                    style: StrokeStyle(lineWidth: 1.0, lineCap: .round, lineJoin: .round)
+                )
+            }
+        }
+    }
+}
+
+/// "赤霞" (Ember) -- three drifting warm glow pools blended additively, a
+/// thick amber wave with a thinner rose wave riding underneath, and a
+/// handful of rising spark particles.
+private struct Ember: View {
+    let levels: [Double]
+
+    private static let glowPoints: [(x: Double, y: Double, color: Color, radius: Double)] = [
+        (0.30, 0.53, Color(red: 1.0, green: 0.28, blue: 0.18).opacity(0.36), 0.30),
+        (0.53, 0.43, Color(red: 1.0, green: 0.54, blue: 0.22).opacity(0.30), 0.36),
+        (0.72, 0.57, Color(red: 1.0, green: 0.22, blue: 0.47).opacity(0.24), 0.28),
+    ]
+
+    var body: some View {
+        TimelineView(.animation(minimumInterval: 0.03)) { context in
+            let t = context.date.timeIntervalSinceReferenceDate
+            let voiceLevel = levels.last ?? 0
+            let synthFloor = 0.05 + 0.05 * abs(sin(t * 0.8))
+            let energy = max(voiceLevel, synthFloor)
+
+            Canvas { canvas, size in
+                canvas.blendMode = .screen
+                for (index, point) in Self.glowPoints.enumerated() {
+                    let x = size.width * CGFloat(point.x + sin(t * 0.62 + Double(index)) * 0.035)
+                    let y = size.height * CGFloat(point.y + cos(t * 0.73 + Double(index)) * 0.06)
+                    let r = size.width * CGFloat(point.radius) * CGFloat(0.78 + energy * 0.22)
+                    canvas.fill(
+                        Path(ellipseIn: CGRect(x: x - r, y: y - r, width: r * 2, height: r * 2)),
+                        with: .radialGradient(Gradient(colors: [point.color, .clear]), center: CGPoint(x: x, y: y), startRadius: 0, endRadius: r)
+                    )
+                }
+                canvas.blendMode = .normal
+
+                canvas.stroke(
+                    nexVoiceSmoothWavePath(size: size, t: t, energy: energy, amplitude: size.height * 0.4, frequency: 3.1, phase: 1.1),
+                    with: .color(Color(red: 1.0, green: 0.69, blue: 0.36).opacity(0.92)),
+                    style: StrokeStyle(lineWidth: 2.0, lineCap: .round, lineJoin: .round)
+                )
+                canvas.stroke(
+                    nexVoiceSmoothWavePath(size: size, t: t + 0.1, energy: energy * 0.78, amplitude: size.height * 0.32, frequency: 5.2, phase: 2.8),
+                    with: .color(Color(red: 1.0, green: 0.31, blue: 0.47).opacity(0.62)),
+                    style: StrokeStyle(lineWidth: 1.1, lineCap: .round, lineJoin: .round)
+                )
+
+                for i in 0..<8 {
+                    let progress = (t * (0.13 + nexVoiceSeeded(Double(i)) * 0.13) + nexVoiceSeeded(Double(i) * 4.7)).truncatingRemainder(dividingBy: 1)
+                    let x = size.width * CGFloat(0.25 + nexVoiceSeeded(Double(i) * 7.4) * 0.5)
+                    let y = size.height * CGFloat(0.82 - progress * 0.64)
+                    let sparkSize = CGFloat(1.0 + nexVoiceSeeded(Double(i) * 2.8) * 1.2)
+                    let color: Color = i % 2 == 0 ? Color(red: 1.0, green: 0.71, blue: 0.36) : Color(red: 1.0, green: 0.36, blue: 0.33)
+                    canvas.fill(
+                        Path(ellipseIn: CGRect(x: x - sparkSize, y: y - sparkSize, width: sparkSize * 2, height: sparkSize * 2)),
+                        with: .color(color.opacity((1 - progress) * (0.25 + energy * 0.5)))
+                    )
+                }
+            }
         }
     }
 }

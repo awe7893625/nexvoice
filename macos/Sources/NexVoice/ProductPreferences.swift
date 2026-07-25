@@ -23,6 +23,12 @@ enum HUDStyle: String, CaseIterable, Codable, Sendable {
     case sketch
     case incense
     case dots
+    case floatVoice
+    case prismCore
+    case pulseField
+    case stardust
+    case frost
+    case ember
 
     var displayName: String {
         switch self {
@@ -38,6 +44,12 @@ enum HUDStyle: String, CaseIterable, Codable, Sendable {
         case .sketch: "素描"
         case .incense: "燼香"
         case .dots: "圓點"
+        case .floatVoice: "浮聲"
+        case .prismCore: "虹核"
+        case .pulseField: "脈界"
+        case .stardust: "星塵"
+        case .frost: "霜息"
+        case .ember: "赤霞"
         }
     }
 }
