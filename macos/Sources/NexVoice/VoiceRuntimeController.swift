@@ -115,6 +115,13 @@ final class VoiceRuntimeController {
     }
 
     init() {
+        installLiveMeter()
+    }
+
+    /// Single definition of "the HUD listens to the microphone" -- preview mode
+    /// swaps it out and must restore exactly this, not a copy that can drift.
+    private func installLiveMeter() {
+        hud.bypassNoiseGate = false
         hud.meterProvider = { [weak self] in self?.recorder.meterLevel() ?? 0 }
     }
 
@@ -206,7 +213,9 @@ final class VoiceRuntimeController {
         // No recorder runs during a preview, so the real meter would report
         // silence -- and since motion now follows the voice, the HUD would sit
         // still and the screenshot loop would show nothing. Feed it the same
-        // synthetic breath the settings tiles use.
+        // synthetic breath the settings tiles use, and bypass the room-tone
+        // gate: that envelope has no syllable gaps for min-hold to latch onto.
+        hud.bypassNoiseGate = true
         hud.meterProvider = {
             nexVoiceHUDPreviewSignal(at: Date().timeIntervalSinceReferenceDate).level
         }
@@ -216,7 +225,7 @@ final class VoiceRuntimeController {
             try? await Task.sleep(for: .seconds(duration))
             guard let self else { return }
             self.hud.hide()
-            self.hud.meterProvider = { [weak self] in self?.recorder.meterLevel() ?? 0 }
+            self.installLiveMeter()
         }
     }
 

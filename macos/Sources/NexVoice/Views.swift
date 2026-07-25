@@ -753,7 +753,16 @@ private enum SettingsSection: String, CaseIterable, Identifiable {
 private struct SettingsPage: View {
     @EnvironmentObject private var model: AppModel
     @Environment(\.openWindow) private var openWindow
-    @State private var section: SettingsSection = .general
+    // Scene storage, not @State: switching the app theme re-identifies the
+    // whole dashboard subtree (`.id(appTheme)` on DashboardView), which would
+    // throw away plain view state and bounce the user back to 一般 -- right
+    // after they came to 外觀 to compare themes.
+    @SceneStorage("settings.section") private var sectionRaw = SettingsSection.general.rawValue
+
+    private var section: SettingsSection {
+        get { SettingsSection(rawValue: sectionRaw) ?? .general }
+        nonmutating set { sectionRaw = newValue.rawValue }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
