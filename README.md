@@ -2,11 +2,11 @@
   <h1 align="center">NexVoice</h1>
   <p align="center"><b>macOS 原生本地優先語音輸入與 AI 文本修飾系統</b></p>
   <p align="center">
-    <a href="https://github.com/awe7893625/nexvoice/stargazers"><img src="https://img.shields.io/github/stars/awe7893625/nexvoice?style=for-the-badge&logo=github&color=gold" alt="GitHub Stars"></a>
+    <a href="https://github.com/awe7893625/nexvoice"><img src="https://img.shields.io/github/stars/awe7893625/nexvoice?style=for-the-badge&logo=github&color=gold" alt="GitHub Stars"></a>
     <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg?style=for-the-badge" alt="MIT License"></a>
-    <a href="#"><img src="https://img.shields.io/badge/macOS-14.0%2B-black?style=for-the-badge&logo=apple" alt="macOS 14+"></a>
-    <a href="#"><img src="https://img.shields.io/badge/Architecture-Apple%20Silicon-orange?style=for-the-badge" alt="Apple Silicon"></a>
-    <a href="#"><img src="https://img.shields.io/badge/Privacy-Local--First-green?style=for-the-badge" alt="Local First"></a>
+    <img src="https://img.shields.io/badge/macOS-14.0%2B-black?style=for-the-badge&logo=apple" alt="macOS 14+">
+    <img src="https://img.shields.io/badge/Architecture-Apple%20Silicon-orange?style=for-the-badge" alt="Apple Silicon">
+    <img src="https://img.shields.io/badge/Privacy-Local--First-green?style=for-the-badge" alt="Local First">
   </p>
 </p>
 
@@ -15,7 +15,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/awe7893625/nexvoice/stargazers"><b>⭐ 為本專案點亮 Star</b></a> •
+  <a href="https://github.com/awe7893625/nexvoice"><b>⭐ 為本專案點亮 Star</b></a> •
   <a href="https://nexvoice-ai.movielin8866.workers.dev"><b>🌐 Live HUD 展示預覽</b></a> •
   <a href="https://github.com/awe7893625/nexvoice/archive/refs/heads/main.zip"><b>📦 下載原始碼 (.zip)</b></a> •
   <a href="https://github.com/awe7893625/nexvoice/issues"><b>💬 回報問題 / Issues</b></a> •
@@ -128,7 +128,7 @@ cd macos && swift test
 
 如果 NexVoice 對您的日常工作或開發有所幫助，請給本專案點亮一顆 **Star** ⭐️，這將是我們持續維護與更新的最大動力！
 
-[👉 點擊這裡前往 GitHub 為 NexVoice 點亮 Star](https://github.com/awe7893625/nexvoice/stargazers)
+[👉 點擊這裡前往 GitHub 為 NexVoice 點亮 Star](https://github.com/awe7893625/nexvoice)
 
 ---
 
