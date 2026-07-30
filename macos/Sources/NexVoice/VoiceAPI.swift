@@ -1,0 +1,691 @@
+import CryptoKit
+import Darwin
+import Foundation
+import Security
+
+struct TranscriptionResult: Sendable {
+    let text: String
+    let milliseconds: Int?
+    let route: STTRoute
+}
+
+enum VoiceAPIError: LocalizedError {
+    case missingCredential(String)
+    case invalidResponse
+    case responseTooLarge
+    case serviceUnavailable(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .missingCredential(let service): "\(service) 尚未配置"
+        case .invalidResponse: "語音服務回應格式錯誤"
+        case .responseTooLarge: "語音服務回應超過安全上限"
+        case .serviceUnavailable(let message): message
+        }
+    }
+}
+
+struct VoiceAPI {
+    private let session: URLSession
+    /// Final transcription runs as long as the audio demands (cold model load
+    /// alone can exceed 10s; a 3-minute recording takes tens of seconds on
+    /// MLX). The short `session` timeouts killed those requests mid-flight and
+    /// surfaced as "recorded but nothing pasted", so final STT uses its own
+    /// session with generous ceilings; per-request timeouts stay scaled to
+    /// audio length in transcribeLocal/transcribeGroq.
+    private let transcribeSession: URLSession
+
+    init() {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
+        configuration.timeoutIntervalForRequest = 8
+        configuration.timeoutIntervalForResource = 10
+        session = URLSession(configuration: configuration)
+        let transcribeConfiguration = URLSessionConfiguration.ephemeral
+        transcribeConfiguration.requestCachePolicy = .reloadIgnoringLocalCacheData
+        transcribeConfiguration.timeoutIntervalForRequest = 120
+        transcribeConfiguration.timeoutIntervalForResource = 300
+        transcribeSession = URLSession(configuration: transcribeConfiguration)
+    }
+
+    /// Base 20s covers model warm-up and dispatch; add real-time-factor
+    /// headroom proportional to audio duration (16kHz mono 16-bit = 32KB/s).
+    static func finalTranscribeTimeout(audioBytes: Int) -> TimeInterval {
+        let audioSeconds = TimeInterval(audioBytes) / 32_000
+        return min(240, 20 + audioSeconds * 1.2)
+    }
+
+    func transcribeLocal(
+        fileURL: URL,
+        partial: Bool = false,
+        sessionID: UUID = UUID(),
+        sequence: Int = 0,
+        vocabulary: [VocabEntry] = []
+    ) async throws -> TranscriptionResult {
+        guard let secret = LocalRuntimeToken.current else {
+            throw VoiceAPIError.serviceUnavailable("本機憑證檔案不安全或無法建立，已停用本機 runtime")
+        }
+        let url = LocalRuntimeConfiguration.endpoint.appendingPathComponent("/")
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        let audio = try Data(contentsOf: fileURL)
+        guard audio.count <= Self.maxAudioBytes else { throw VoiceAPIError.responseTooLarge }
+        request.timeoutInterval = partial ? 8 : Self.finalTranscribeTimeout(audioBytes: audio.count)
+        let body = try JSONSerialization.data(
+            withJSONObject: Self.localRequestObject(
+                audio: audio,
+                partial: partial,
+                sessionID: sessionID,
+                sequence: sequence,
+                vocabulary: vocabulary
+            )
+        )
+        request.httpBody = body
+        let nonce = LocalRuntimeChallenge.nonce()
+        request.setValue(nonce, forHTTPHeaderField: "X-NexVoice-Local-Nonce")
+        request.setValue(
+            LocalRuntimeChallenge.requestProof(
+                secret: secret, method: "POST", path: url.path, nonce: nonce, body: body
+            ),
+            forHTTPHeaderField: "X-NexVoice-Local-Proof"
+        )
+
+        let (data, response) = try await limitedData(
+            for: request,
+            using: partial ? session : transcribeSession
+        )
+        try validate(response)
+        // Empty text is a legitimate outcome (silence gate) for a final pass:
+        // it must flow through to the transcript guards ("內容過短") instead of
+        // masquerading as a protocol failure.
+        guard let manifest = LocalRuntimeContract.bundledManifest,
+              let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let text = object["text"] as? String,
+              let session = object["session"] as? String,
+              session == sessionID.uuidString.lowercased(),
+              let responseSequence = (object["sequence"] as? NSNumber)?.intValue,
+              responseSequence == Swift.max(0, sequence),
+              (object["contract_version"] as? NSNumber)?.intValue == manifest.contractVersion,
+              object["runtime_build"] as? String == manifest.runtimeBuild,
+              (object["instance_id"] as? String).flatMap(UUID.init(uuidString:)) != nil,
+              partial == false || !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              text.utf8.count <= Self.maxTranscriptBytes,
+              LocalRuntimeChallenge.verify(
+                  proofBase64: object["response_proof"] as? String,
+                  secret: secret,
+                  message: LocalRuntimeChallenge.transcribeResponseMessage(
+                      nonce: nonce, session: session, sequence: responseSequence, text: text
+                  )
+              )
+        else { throw VoiceAPIError.invalidResponse }
+        return TranscriptionResult(
+            text: TranscriptLanguage.traditionalChinese(text),
+            milliseconds: (object["ms"] as? NSNumber)?.intValue,
+            route: .localMLX
+        )
+    }
+
+    static func localRequestObject(
+        audio: Data,
+        partial: Bool,
+        sessionID: UUID,
+        sequence: Int,
+        vocabulary: [VocabEntry]
+    ) -> [String: Any] {
+        [
+            "audio_base64": audio.base64EncodedString(),
+            "session": sessionID.uuidString.lowercased(),
+            "sequence": Swift.max(0, sequence),
+            "quality": partial ? "partial" : "final",
+            "vocab_terms": VocabularyPolicy.promptTerms(from: vocabulary)
+        ]
+    }
+
+    func transcribeGroq(fileURL: URL) async throws -> TranscriptionResult {
+        guard let key = SecretStore.secret(named: ".groq_key") else {
+            throw VoiceAPIError.missingCredential("Groq")
+        }
+        let boundary = "NexVoice-\(UUID().uuidString)"
+        var body = Data()
+        body.appendFormField("model", value: "whisper-large-v3-turbo", boundary: boundary)
+        body.appendFormField("language", value: "zh", boundary: boundary)
+        body.appendFile(
+            field: "file",
+            filename: "nexvoice.wav",
+            mimeType: "audio/wav",
+            data: try Data(contentsOf: fileURL),
+            boundary: boundary
+        )
+        body.appendString("--\(boundary)--\r\n")
+
+        var request = URLRequest(url: URL(string: "https://api.groq.com/openai/v1/audio/transcriptions")!)
+        request.httpMethod = "POST"
+        request.timeoutInterval = Self.finalTranscribeTimeout(audioBytes: body.count)
+        request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+        request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+        request.httpBody = body
+
+        let (data, response) = try await limitedData(for: request, using: transcribeSession)
+        try validate(response)
+        guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let text = object["text"] as? String,
+              !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              text.utf8.count <= Self.maxTranscriptBytes
+        else { throw VoiceAPIError.invalidResponse }
+        return TranscriptionResult(
+            text: TranscriptLanguage.traditionalChinese(text),
+            milliseconds: nil,
+            route: .groqWhisper
+        )
+    }
+
+    func clean(_ text: String) async -> String {
+        if let groq = try? await cleanWithGroq(text) { return groq }
+        if let gemini = try? await cleanWithGemini(text) { return gemini }
+        return text
+    }
+
+    /// Long-dictation organizer. Returns nil when no provider produced a usable
+    /// result so the caller can fall back to the plain cleanup lane.
+    func organize(_ text: String) async -> String? {
+        if let groq = try? await chatWithGroq(system: Self.organizePrompt, user: text),
+           !groq.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return groq
+        }
+        if let gemini = try? await chatWithGemini(system: Self.organizePrompt, user: text),
+           !gemini.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return gemini
+        }
+        return nil
+    }
+
+    /// Speak-to-edit: apply spoken instruction to selected text; returns revised text only.
+    func editSelected(selected: String, instruction: String) async -> String? {
+        let system = """
+        The user selected some text, then spoke an instruction (possibly mixed Chinese/English).
+        Apply ONLY the instruction to the selected text. Output the revised text alone.
+        Preserve the original language of the selected text unless asked to translate.
+        Do not add preface, quotes, or explanation.
+        """
+        let user = "SELECTED TEXT:\n\(selected)\n\nINSTRUCTION:\n\(instruction)"
+        if let groq = try? await chatWithGroq(system: system, user: user) { return groq }
+        if let gemini = try? await chatWithGemini(system: system, user: user) { return gemini }
+        return nil
+    }
+
+    /// Speak-to-ask: answer from selected text only; do not rewrite selection.
+    func answerAboutSelected(selected: String, question: String) async -> String? {
+        let system = """
+        你是精簡助手。根據「選取文字」回答「問題」。
+        規則：只用選取文字裡的資訊；不要改寫或覆蓋原文；不要前言；繁中為主（除非要求翻譯）。
+        只輸出答案本身。
+        """
+        let user = "SELECTED TEXT:\n\(selected)\n\nQUESTION:\n\(question)"
+        if let groq = try? await chatWithGroq(system: system, user: user) { return groq }
+        if let gemini = try? await chatWithGemini(system: system, user: user) { return gemini }
+        return nil
+    }
+
+    private func chatWithGroq(system: String, user: String) async throws -> String {
+        guard let key = SecretStore.secret(named: ".groq_key") else {
+            throw VoiceAPIError.missingCredential("Groq")
+        }
+        let body: [String: Any] = [
+            "model": "qwen/qwen3.6-27b",
+            "temperature": 0.2,
+            "reasoning_effort": "none",
+            "messages": [
+                ["role": "system", "content": system],
+                ["role": "user", "content": user]
+            ]
+        ]
+        var request = URLRequest(url: URL(string: "https://api.groq.com/openai/v1/chat/completions")!)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 8
+        request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        let (data, response) = try await limitedData(for: request)
+        try validate(response)
+        guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let choices = object["choices"] as? [[String: Any]],
+              let message = choices.first?["message"] as? [String: Any],
+              let content = message["content"] as? String,
+              content.utf8.count <= Self.maxTranscriptBytes
+        else { throw VoiceAPIError.invalidResponse }
+        return content.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func chatWithGemini(system: String, user: String) async throws -> String {
+        guard let key = SecretStore.secret(named: ".gemini_key") else {
+            throw VoiceAPIError.missingCredential("Gemini")
+        }
+        let url = URL(string: "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent")!
+        let body: [String: Any] = [
+            "system_instruction": ["parts": [["text": system]]],
+            "contents": [["role": "user", "parts": [["text": user]]]],
+            "generationConfig": ["temperature": 0.2, "maxOutputTokens": 2048]
+        ]
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 8
+        request.setValue(key, forHTTPHeaderField: "x-goog-api-key")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        let (data, response) = try await limitedData(for: request)
+        try validate(response)
+        guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let candidates = object["candidates"] as? [[String: Any]],
+              let content = candidates.first?["content"] as? [String: Any],
+              let parts = content["parts"] as? [[String: Any]],
+              let text = parts.first?["text"] as? String,
+              text.utf8.count <= Self.maxTranscriptBytes
+        else { throw VoiceAPIError.invalidResponse }
+        return text.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func cleanWithGroq(_ text: String) async throws -> String {
+        guard let key = SecretStore.secret(named: ".groq_key") else {
+            throw VoiceAPIError.missingCredential("Groq")
+        }
+        let body: [String: Any] = [
+            "model": "qwen/qwen3.6-27b",
+            "temperature": 0.2,
+            "reasoning_effort": "none",
+            "messages": [
+                ["role": "system", "content": Self.cleanupPrompt],
+                ["role": "user", "content": text]
+            ]
+        ]
+        var request = URLRequest(url: URL(string: "https://api.groq.com/openai/v1/chat/completions")!)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 3
+        request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+
+        let (data, response) = try await limitedData(for: request)
+        try validate(response)
+        guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let choices = object["choices"] as? [[String: Any]],
+              let message = choices.first?["message"] as? [String: Any],
+              let content = message["content"] as? String,
+              content.utf8.count <= Self.maxTranscriptBytes
+        else { throw VoiceAPIError.invalidResponse }
+        return content.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func cleanWithGemini(_ text: String) async throws -> String {
+        guard let key = SecretStore.secret(named: ".gemini_key") else {
+            throw VoiceAPIError.missingCredential("Gemini")
+        }
+        let url = URL(string: "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent")!
+        let body: [String: Any] = [
+            "system_instruction": ["parts": [["text": Self.cleanupPrompt]]],
+            "contents": [["role": "user", "parts": [["text": text]]]],
+            "generationConfig": ["temperature": 0.2, "maxOutputTokens": 1024]
+        ]
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 4
+        request.setValue(key, forHTTPHeaderField: "x-goog-api-key")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+
+        let (data, response) = try await limitedData(for: request)
+        try validate(response)
+        guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let candidates = object["candidates"] as? [[String: Any]],
+              let content = candidates.first?["content"] as? [String: Any],
+              let parts = content["parts"] as? [[String: Any]],
+              let cleaned = parts.first?["text"] as? String,
+              cleaned.utf8.count <= Self.maxTranscriptBytes
+        else { throw VoiceAPIError.invalidResponse }
+        return cleaned.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func validate(_ response: URLResponse) throws {
+        guard let http = response as? HTTPURLResponse, 200..<300 ~= http.statusCode else {
+            throw VoiceAPIError.serviceUnavailable("語音服務暫時無法使用")
+        }
+    }
+
+    private func limitedData(
+        for request: URLRequest,
+        maxBytes: Int = 1_048_576,
+        using overrideSession: URLSession? = nil
+    ) async throws -> (Data, URLResponse) {
+        let (bytes, response) = try await (overrideSession ?? session).bytes(for: request)
+        if response.expectedContentLength > Int64(maxBytes) {
+            throw VoiceAPIError.responseTooLarge
+        }
+        var data = Data()
+        data.reserveCapacity(min(maxBytes, max(0, Int(response.expectedContentLength))))
+        for try await byte in bytes {
+            try Task.checkCancellation()
+            guard data.count < maxBytes else { throw VoiceAPIError.responseTooLarge }
+            data.append(byte)
+        }
+        return (data, response)
+    }
+
+    private static let cleanupPrompt = """
+    你是逐字稿清理工具。只刪除口頭禪與無意義重複、修正明顯錯字、補上標點。
+    保留原意、人名、數字、技術名詞與中英混用，不翻譯、不回答、不新增內容。
+    只輸出清理後文字，不要前言。
+    """
+    private static let organizePrompt = """
+    你是口述內容整理工具。把使用者的長篇口述整理成容易閱讀的重點式排版：
+    第一行用一句話寫出主旨，其後用「- 」條列重點；有先後順序或待辦性質的內容改用 1. 2. 3. 編號。
+    保留所有具體細節、人名、數字、技術名詞與中英混用；不新增、不猜測、不翻譯、不回答內容中的問題。
+    只輸出整理後的文字，不要任何前言或說明。
+    """
+    private static let maxAudioBytes = 32 * 1_024 * 1_024
+    private static let maxTranscriptBytes = 65_536
+}
+
+/// Shared HMAC secret for the bundled local helper -- this value is never sent
+/// on the wire (see LocalRuntimeChallenge); it only signs/verifies proofs.
+/// Any validation failure (insecure directory, symlink, wrong owner, wrong
+/// length, write failure) must disable the local runtime path rather than
+/// silently fall back to an unverified or empty credential.
+enum LocalRuntimeToken {
+    private static let lock = NSLock()
+    nonisolated(unsafe) private static var cached: String?
+    nonisolated(unsafe) private static var failed = false
+    private static let expectedLength = UUID().uuidString.count * 2
+
+    static var current: String? {
+        lock.lock(); defer { lock.unlock() }
+        if let cached { return cached }
+        if failed { return nil }
+        guard let value = loadOrCreate() else {
+            failed = true
+            return nil
+        }
+        cached = value
+        return value
+    }
+
+    private static func loadOrCreate() -> String? {
+        let dir = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".cache/nexvoice", isDirectory: true)
+        guard ensureSecureDirectory(dir) else { return nil }
+        let url = dir.appendingPathComponent("local-runtime.token")
+        if let existing = readSecureToken(at: url) { return existing }
+        return createSecureToken(at: url)
+    }
+
+    private static func ensureSecureDirectory(_ dir: URL) -> Bool {
+        var isDirectory: ObjCBool = false
+        if !FileManager.default.fileExists(atPath: dir.path, isDirectory: &isDirectory) {
+            guard (try? FileManager.default.createDirectory(
+                at: dir, withIntermediateDirectories: true,
+                attributes: [.posixPermissions: 0o700]
+            )) != nil else { return false }
+        } else if !isDirectory.boolValue {
+            return false
+        }
+        guard let attributes = try? FileManager.default.attributesOfItem(atPath: dir.path),
+              let permissions = attributes[.posixPermissions] as? NSNumber,
+              permissions.intValue & 0o077 == 0,
+              let owner = attributes[.ownerAccountID] as? NSNumber,
+              owner.uint32Value == getuid()
+        else { return false }
+        return true
+    }
+
+    private static func readSecureToken(at url: URL) -> String? {
+        guard let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey]),
+              values.isRegularFile == true,
+              values.isSymbolicLink != true,
+              let attributes = try? FileManager.default.attributesOfItem(atPath: url.path),
+              let permissions = attributes[.posixPermissions] as? NSNumber,
+              permissions.intValue & 0o077 == 0,
+              let owner = attributes[.ownerAccountID] as? NSNumber,
+              owner.uint32Value == getuid(),
+              let data = try? Data(contentsOf: url),
+              let text = String(data: data, encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+              text.utf8.count == expectedLength
+        else { return nil }
+        return text
+    }
+
+    /// Creates the token file with O_EXCL|O_NOFOLLOW so we never write through
+    /// a pre-planted symlink and never silently overwrite a file that already
+    /// exists (a `try?` atomic-write here previously swallowed every failure).
+    private static func createSecureToken(at url: URL) -> String? {
+        let token = UUID().uuidString + UUID().uuidString
+        let fd = url.path.withCString { path in
+            open(path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0o600)
+        }
+        guard fd >= 0 else {
+            // Lost a creation race to another process -- re-read rather than
+            // silently generating a second, divergent token.
+            return readSecureToken(at: url)
+        }
+        defer { close(fd) }
+        let bytes = Array(token.utf8)
+        let written = bytes.withUnsafeBufferPointer { buffer -> Int in
+            guard let base = buffer.baseAddress else { return -1 }
+            return write(fd, base, buffer.count)
+        }
+        guard written == bytes.count else { return nil }
+        return token
+    }
+}
+
+/// Mutual challenge-response for the localhost runtime helper. Neither side
+/// ever transmits the shared secret; only nonces and HMAC-SHA256 proofs
+/// cross the wire, so a process that binds :5112 without read access to the
+/// 0600 token file (e.g. a sandboxed local squatter) cannot forge a request
+/// or convincingly impersonate a response. See HANDOFF P0-E.
+enum LocalRuntimeChallenge {
+    static func nonce() -> String {
+        var bytes = [UInt8](repeating: 0, count: 18)
+        _ = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
+        return Data(bytes).base64EncodedString()
+    }
+
+    static func requestProof(secret: String, method: String, path: String, nonce: String, body: Data) -> String {
+        let bodyHash = SHA256.hash(data: body).map { String(format: "%02x", $0) }.joined()
+        return sign(secret: secret, message: "\(method)\n\(path)\n\(nonce)\n\(bodyHash)")
+    }
+
+    static func verify(proofBase64: String?, secret: String, message: String) -> Bool {
+        guard let proofBase64, let code = Data(base64Encoded: proofBase64) else { return false }
+        let key = SymmetricKey(data: Data(secret.utf8))
+        return HMAC<SHA256>.isValidAuthenticationCode(code, authenticating: Data(message.utf8), using: key)
+    }
+
+    static func healthResponseMessage(
+        nonce: String,
+        identity: LocalRuntimeIdentity
+    ) -> String {
+        "health\n\(nonce)\n\(identity.instanceID)\n\(identity.runtimeBuild)\n\(identity.ownerNonce)\n\(identity.contractVersion)"
+    }
+
+    static func shutdownResponseMessage(nonce: String, instanceID: String) -> String {
+        "shutdown\n\(nonce)\n\(instanceID)"
+    }
+
+    static func transcribeResponseMessage(
+        nonce: String,
+        session: String,
+        sequence: Int,
+        text: String
+    ) -> String {
+        "transcribe\n\(nonce)\n\(session)\n\(sequence)\n\(text)"
+    }
+
+    private static func sign(secret: String, message: String) -> String {
+        let key = SymmetricKey(data: Data(secret.utf8))
+        let code = HMAC<SHA256>.authenticationCode(for: Data(message.utf8), using: key)
+        return Data(code).base64EncodedString()
+    }
+}
+
+enum GatewayToken {
+    static var current: String? {
+        let url = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".cache/nexvoice/gateway.token")
+        guard let value = try? String(contentsOf: url, encoding: .utf8) else { return nil }
+        let token = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return token.isEmpty ? nil : token
+    }
+}
+
+/// Local-beta secrets: 0600 files under ~/.cache/nexvoice/secrets + in-memory cache.
+/// Never touches macOS Keychain on the hot path (avoids password prompts for ad-hoc apps).
+enum SecretStore {
+    private static let cacheLock = NSLock()
+    nonisolated(unsafe) private static var cachedSecrets: [String: String] = [:]
+    nonisolated(unsafe) private static var loadedSecrets: Set<String> = []
+    nonisolated(unsafe) private static var bootstrapped = false
+
+    static func isSecureSecret(named filename: String) -> Bool {
+        secret(named: filename) != nil
+    }
+
+    static func secret(named filename: String) -> String? {
+        cacheLock.lock()
+        if loadedSecrets.contains(filename) {
+            let cached = cachedSecrets[filename]
+            cacheLock.unlock()
+            return cached
+        }
+        cacheLock.unlock()
+
+        let value = fileSecret(named: filename)
+        cacheLock.lock()
+        loadedSecrets.insert(filename)
+        if let value { cachedSecrets[filename] = value }
+        cacheLock.unlock()
+        return value
+    }
+
+    /// Call once at launch. Seeds 0600 files from env if missing; primes memory cache.
+    /// Does **not** read Keychain (prevents password dialogs).
+    static func bootstrapLocalSecrets() {
+        cacheLock.lock()
+        if bootstrapped {
+            cacheLock.unlock()
+            return
+        }
+        bootstrapped = true
+        cacheLock.unlock()
+
+        ensureSecretsDirectory()
+        materializeFromEnvironmentIfNeeded()
+        for filename in [".groq_key", ".gemini_key"] {
+            _ = secret(named: filename)
+        }
+    }
+
+    /// Back-compat name used by AppModel; now local-file bootstrap only.
+    static func migrateLegacySecretsToKeychain() {
+        bootstrapLocalSecrets()
+    }
+
+    private static func materializeFromEnvironmentIfNeeded() {
+        let mapping: [(String, [String])] = [
+            (".groq_key", ["GROQ_API_KEY", "GROQ_KEY"]),
+            (".gemini_key", ["GEMINI_API_KEY", "GOOGLE_API_KEY", "GEMINI_API_KEY_2"])
+        ]
+        for (filename, envNames) in mapping {
+            if fileSecret(named: filename) != nil { continue }
+            for name in envNames {
+                if let value = ProcessInfo.processInfo.environment[name]?
+                    .trimmingCharacters(in: .whitespacesAndNewlines),
+                   !value.isEmpty
+                {
+                    _ = writeSecretFile(filename, value: value)
+                    break
+                }
+            }
+        }
+    }
+
+    private static func ensureSecretsDirectory() {
+        let directory = secretsDirectory
+        try? FileManager.default.createDirectory(
+            at: directory,
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700]
+        )
+        try? FileManager.default.setAttributes(
+            [.posixPermissions: 0o700],
+            ofItemAtPath: directory.path
+        )
+    }
+
+    private static var secretsDirectory: URL {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".cache/nexvoice/secrets", isDirectory: true)
+    }
+
+    private static func fileSecret(named filename: String) -> String? {
+        for url in candidateSecretURLs(named: filename) {
+            guard let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey]),
+                  values.isRegularFile == true,
+                  values.isSymbolicLink != true,
+                  let attributes = try? FileManager.default.attributesOfItem(atPath: url.path),
+                  let permissions = attributes[.posixPermissions] as? NSNumber,
+                  permissions.intValue & 0o077 == 0,
+                  let owner = attributes[.ownerAccountID] as? NSNumber,
+                  owner.uint32Value == getuid(),
+                  let data = try? Data(contentsOf: url),
+                  let text = String(data: data, encoding: .utf8)?
+                    .trimmingCharacters(in: .whitespacesAndNewlines),
+                  !text.isEmpty
+            else { continue }
+            return text
+        }
+        return nil
+    }
+
+    static func writeSecretFile(_ filename: String, value: String) -> Bool {
+        ensureSecretsDirectory()
+        let url = secretsDirectory.appendingPathComponent(filename)
+        do {
+            try Data((value + "\n").utf8).write(to: url, options: .atomic)
+            try FileManager.default.setAttributes(
+                [.posixPermissions: 0o600],
+                ofItemAtPath: url.path
+            )
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    private static func candidateSecretURLs(named filename: String) -> [URL] {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        return [
+            secretsDirectory.appendingPathComponent(filename),
+            home.appendingPathComponent(".hammerspoon").appendingPathComponent(filename)
+        ]
+    }
+}
+
+private extension Data {
+    mutating func appendString(_ string: String) {
+        append(string.data(using: .utf8)!)
+    }
+
+    mutating func appendFormField(_ name: String, value: String, boundary: String) {
+        appendString("--\(boundary)\r\n")
+        appendString("Content-Disposition: form-data; name=\"\(name)\"\r\n\r\n")
+        appendString("\(value)\r\n")
+    }
+
+    mutating func appendFile(field: String, filename: String, mimeType: String, data: Data, boundary: String) {
+        appendString("--\(boundary)\r\n")
+        appendString("Content-Disposition: form-data; name=\"\(field)\"; filename=\"\(filename)\"\r\n")
+        appendString("Content-Type: \(mimeType)\r\n\r\n")
+        append(data)
+        appendString("\r\n")
+    }
+}

@@ -1,0 +1,50 @@
+# Secret / Tokens / Config
+.env
+.env.*
+*.token
+*.key
+*.pem
+config.json
+gateway.token
+
+# IDE & OS
+.vscode/
+.idea/
+.DS_Store
+*.swp
+*~
+
+# Python & Environment
+.venv/
+venv/
+env/
+__pycache__/
+.pytest_cache/
+*.py[cod]
+
+# Media / Recordings / Cache / Models
+*.wav
+*.mp3
+*.flac
+*.m4a
+recordings/
+transcripts/
+models/
+model-cache/
+crash-dumps/
+*.log
+
+# Build & Dist
+dist/
+/build/
+*.exe
+*.msi
+data/
+macos/.build/
+website/.next/
+website/.wrangler/
+website/node_modules/
+
+# Scripts artifacts
+macos/scripts/window-id
+

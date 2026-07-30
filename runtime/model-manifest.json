@@ -1,0 +1,10 @@
+{
+  "schema": 1,
+  "model": "mlx-community/whisper-large-v3-turbo",
+  "task": "automatic-speech-recognition",
+  "runtime": "mlx-whisper",
+  "download": "Hugging Face model card; verify the model's license and revision before redistribution",
+  "revision": "a4aaeec0636e6fef84abdcbe3544cb2bf7e9f6fb",
+  "sha256": "directory-manifest-required-before-release",
+  "redistribution": "Model weights are not bundled by this repository until their license permits redistribution."
+}
