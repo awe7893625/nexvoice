@@ -30,7 +30,7 @@ NexVoice 是一款專為 **Apple Silicon (macOS 14.0+)** 打造的原生語音�
 
 ### 🎨 拟真 macOS 錄音 HUD 與視覺風格
 
-- **真實 macOS 錄音 HUD**：流暢無縫的 Swift / Metal 視覺渲染，支援單擊開關 (Toggle) 與長按說話 (Push-to-Talk)。
+- **真實 macOS 錄音 HUD**：流暢無縫的 SwiftUI Canvas / GraphicsContext 視覺渲染，支援單擊開關 (Toggle) 與長按說話 (Push-to-Talk)。
 - **21 種 HUD 渲染器風格 (Renderers)**：包含 *亮條*, *膠囊光暈*, *等離子柱*, *液態脈衝*, *流光絲帶*, *琉璃*, *極光*, *光球*, *虹核*, *赤霞*, *彗尾*, *雙螺旋*, *水銀*, *電漿*, *日蝕*, *煙霧*, *橫煙*, *海浪*, *絲綢氣流*, *極光霧*, *墨滴擴散*。
 - **3 大視覺主題 (Themes)**：純淨 (Pristine)、設計工房 (Studio)、曜石 (Obsidian)。
 - **7 種邊框處理 (Frames)**：無邊框、髮絲細邊、流光邊、呼吸光環、超薄無底、微光流體、浮雕。
@@ -43,7 +43,7 @@ NexVoice 是一款專為 **Apple Silicon (macOS 14.0+)** 打造的原生語音�
 ### 🤖 靈活的模型路由 (Model Routing)
 
 - **本地優先 (Local-First)**：預設使用 Apple Silicon 專屬 MLX Whisper 進行本地語音轉文字 (STT) 以及本地 Ollama 模型進行文本潤飾。
-- **可選雲端擴充 (Opt-in Cloud)**：Gateway 雲端 STT 支持 Gemini；雲端文本修飾可選擇性接入 Groq, NVIDIA NIM 或 Gemini。App 端亦直接支援 Groq 與 Gemini 整合（Groq 使用 OpenAI 相容 API），且 Gateway 提供 OpenAI 相容的子集 API 端點 (`/v1/audio/transcriptions`)。
+- **可選雲端擴充 (Opt-in Cloud)**：Gateway 雲端 STT 支持 Gemini；雲端文本修飾可選擇性接入 Groq, NVIDIA NIM 或 Gemini。App 端亦直接支援 Groq 與 Gemini 整合（Groq 使用 OpenAI 相容 API），且 Gateway 提供 OpenAI 相容的子集 (OpenAI-compatible subset) API 端點 (`/v1/audio/transcriptions`)。
 
 ### 🤖 AI 自動配置 CLI / REST 與安全隱私
 
@@ -71,13 +71,13 @@ python3 server/app.py
 
 ## 💻 API 使用範例 (API Example)
 
-NexVoice Gateway 提供與 OpenAI 相容的語音轉寫 API 端點：
+NexVoice Gateway 提供 OpenAI 相容子集 (OpenAI-compatible subset) 的語音轉寫 API 端點 (`/v1/audio/transcriptions`)：
 
 ```bash
 curl -X POST http://127.0.0.1:5111/v1/audio/transcriptions \
   -H "X-NexVoice-Token: YOUR_TOKEN_HERE" \
   -F "file=@/path/to/audio.wav" \
-  -F "model=whisper-1"
+  -F "model=mlx-community/whisper-large-v3-turbo"
 ```
 
 詳細介面說明請參閱 [docs/LOCAL_RUNTIME_AND_PROVIDERS.md](docs/LOCAL_RUNTIME_AND_PROVIDERS.md) 與 [docs/PRIVACY.md](docs/PRIVACY.md)。
@@ -109,7 +109,7 @@ curl -X POST http://127.0.0.1:5111/v1/audio/transcriptions \
 # 執行 Python Gateway 與 Agent 測試
 pytest server/
 
-# 建置 Web Showcase 靜態網站
+# 建置 Web Showcase (Cloudflare Worker 兼容) 網站
 npm --prefix website run build
 
 # 建置並測試 macOS SwiftUI 應用程式
