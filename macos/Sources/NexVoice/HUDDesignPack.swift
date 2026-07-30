@@ -297,7 +297,8 @@ struct HelixBraid: View {
     private static let points = 32
 
     var body: some View {
-        Canvas { canvas, size in
+        let phase = hudPhase
+        return Canvas { canvas, size in
             let w = Double(size.width), h = Double(size.height)
             let plate = w / hudReferenceWidth
             let level = levels.last ?? 0
@@ -311,7 +312,7 @@ struct HelixBraid: View {
                 func y(at x: Double) -> Double {
                     let normX = (x - w / 2) / (w / 2)
                     let envelope = cos(normX * .pi * 0.45)
-                    return cy + sin(hudPhase * 2 + normX * 3 + offset)
+                    return cy + sin(phase * 2 + normX * 3 + offset)
                         * (h * 0.36 * (0.15 + level * 0.85)) * envelope
                 }
 
@@ -352,7 +353,8 @@ struct MercuryBand: View {
     private static let steps = 30
 
     var body: some View {
-        Canvas { canvas, size in
+        let phase = hudPhase
+        return Canvas { canvas, size in
             let w = Double(size.width), h = Double(size.height)
             let plate = w / hudReferenceWidth
             let level = levels.last ?? 0
@@ -362,7 +364,7 @@ struct MercuryBand: View {
             func offset(at x: Double) -> Double {
                 let normX = (x - w / 2) / (w / 2)
                 let envelope = cos(normX * .pi * 0.4)
-                let wave = sin(hudPhase * 1.6 + normX * 2.5) * cos(hudPhase * 0.9 + normX * 1.2)
+                let wave = sin(phase * 1.6 + normX * 2.5) * cos(phase * 0.9 + normX * 1.2)
                 return abs(wave) * (4 * plate + level * (h * 0.36)) * envelope
             }
 

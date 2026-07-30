@@ -321,12 +321,13 @@ final class AppModel: ObservableObject {
             let notifications = NSWorkspace.shared.notificationCenter.notifications(
                 named: NSWorkspace.didLaunchApplicationNotification
             )
-            for await notification in notifications {
-                guard let self,
-                      let application = notification.userInfo?[NSWorkspace.applicationUserInfoKey]
-                        as? NSRunningApplication,
-                      application.bundleIdentifier == "now.typeless.desktop"
-                else { continue }
+            let launchedBundleIdentifiers = notifications.compactMap { notification -> String? in
+                let application = notification.userInfo?[NSWorkspace.applicationUserInfoKey]
+                    as? NSRunningApplication
+                return application?.bundleIdentifier
+            }
+            for await bundleIdentifier in launchedBundleIdentifiers {
+                guard let self, bundleIdentifier == "now.typeless.desktop" else { continue }
                 self.typelessRunning = true
                 if self.isEnabled {
                     let relinquished = await self.relinquishToTypeless(reason: "external-launch")
