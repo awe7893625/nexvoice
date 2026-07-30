@@ -7,6 +7,7 @@ Exposes a SettingsView dataclass and helpers to read/write individual keys.
 from __future__ import annotations
 
 from dataclasses import dataclass, fields
+from typing import Any
 
 import db as _db
 
@@ -137,4 +138,3 @@ def apply_patch(patch: dict) -> SettingsView:
 
 def _truthy(value: str) -> bool:
     return value.strip().lower() in {"1", "true", "yes"}
-

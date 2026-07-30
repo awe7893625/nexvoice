@@ -23,12 +23,24 @@ from typing import Any, Generator
 _DB_PATH: str = ""
 
 
+def is_initialized() -> bool:
+    """Return whether this process already selected a database."""
+    return bool(_DB_PATH)
+
+
 def init_db(db_path: str, defaults: dict[str, str] | None = None) -> None:
     """Create tables and seed defaults.  Call once at server startup."""
     global _DB_PATH
     _DB_PATH = db_path
-    Path(db_path).parent.mkdir(parents=True, exist_ok=True)
-    os.chmod(Path(db_path).parent, 0o700)
+    # Ensure the parent directory exists. If it was created now, set restrictive permissions.
+    parent = Path(db_path).parent
+    parent_was_missing = not parent.exists()
+    parent.mkdir(parents=True, exist_ok=True)
+    if parent_was_missing:
+        try:
+            os.chmod(parent, 0o700)
+        except OSError:
+            pass
 
     with _conn() as conn:
         conn.executescript(

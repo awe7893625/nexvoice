@@ -65,9 +65,11 @@ CAT_TOKEN=$(cat ~/.cache/nexvoice/gateway.token)
 
 Inspect capabilities and diagnostics via Python CLI:
 ```sh
-python3 server/agent_cli.py doctor
-python3 server/agent_cli.py capabilities
-python3 server/agent_cli.py config-schema
+python3 server/agent_cli.py doctor [--json]
+python3 server/agent_cli.py capabilities [--json]
+python3 server/agent_cli.py config-schema [--json]
+python3 server/agent_cli.py tune [--json] [--bench --sample FILE.wav] [--allow-download] [--apply] [--config PATH]
+python3 server/agent_cli.py setup-local [--json]
 ```
 
 curl examples:
@@ -96,6 +98,8 @@ curl -s -H "X-NexVoice-Token: $CAT_TOKEN" \
 - **Privacy / Local-first**: Set `privacy_mode: true` to enforce 100% offline transcription.
 - **Gateway STT**: Gateway STT cloud provider is Gemini only (`GEMINI_API_KEY`).
 - **Cleanup engines**: Text cleanup can use local Ollama (`cleanup_local_model`) and optional Groq/NIM/Gemini cloud models when `cloud_enabled: true` and `privacy_mode: false`. Note: `OPENAI_API_KEY` is not a gateway provider.
+- **Safe auto-tune**: `tune` is a dry run unless `--apply` is present. Apply changes only `local_model` and `cleanup_local_model`, preserves all cloud/privacy and unknown fields, and writes the JSON config atomically.
+- **Windows**: Windows clients can call the authenticated Gateway API. The native HUD app and local MLX runtime currently require Apple Silicon macOS; do not claim a Windows EXE exists.
 
 ## Rollback & Uninstall
 
@@ -115,4 +119,3 @@ rm -rf ~/Applications/NexVoice.app ~/.cache/nexvoice ~/.local/share/nexvoice
 - **Build fails with a sandbox error** — ensure `NEXVOICE_SWIFTPM_DISABLE_SANDBOX=1` is set.
 - **Port occupied** — find with `lsof -i :5112` or `lsof -i :5111` and terminate process.
 - **Hotkey does nothing** — verify Accessibility permission in System Settings.
-

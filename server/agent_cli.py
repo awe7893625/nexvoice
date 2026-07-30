@@ -6,6 +6,8 @@ Usage:
   python3 server/agent_cli.py capabilities [--json]
   python3 server/agent_cli.py doctor [--json]
   python3 server/agent_cli.py config-schema [--json]
+  python3 server/agent_cli.py tune [--bench] [--sample FILE] [--apply]
+  python3 server/agent_cli.py setup-local [--json]
 """
 
 from __future__ import annotations
@@ -21,7 +23,8 @@ _PROJECT_ROOT = _HERE.parent
 sys.path.insert(0, str(_HERE))
 
 import settings_store  # noqa: E402
-import stt_router  # noqa: E402
+import autotune  # noqa: E402
+import diagnostics  # noqa: E402
 
 
 def get_capabilities() -> dict:
@@ -72,42 +75,7 @@ def get_capabilities() -> dict:
 
 
 def get_doctor() -> dict:
-    capabilities = get_capabilities()
-    settings = settings_store.to_dict(settings_store.load())
-
-    checks = []
-
-    # Check 1: Privacy & Zero-cost compliance
-    if settings["privacy_mode"]:
-        checks.append({"name": "privacy_mode", "status": "PASS", "message": "Privacy mode active; cloud off"})
-    else:
-        checks.append({"name": "privacy_mode", "status": "INFO", "message": "Privacy mode inactive"})
-
-    # Check 2: Gateway Auth Token
-    token_path = Path.home() / ".cache" / "nexvoice" / "gateway.token"
-    if token_path.exists() or os.environ.get("NEXVOICE_GATEWAY_TOKEN"):
-        checks.append({"name": "gateway_token", "status": "PASS", "message": "Gateway token configured"})
-    else:
-        checks.append({"name": "gateway_token", "status": "WARN", "message": "Gateway token will be generated on startup"})
-
-    # Check 3: Audio capability
-    checks.append({"name": "ffmpeg", "status": "PASS" if Path("/opt/homebrew/bin/ffmpeg").exists() or Path("/usr/local/bin/ffmpeg").exists() else "WARN", "message": "ffmpeg check"})
-
-    # Determine overall status dynamically based on diagnostics
-    statuses = {c["status"] for c in checks}
-    if "FAIL" in statuses:
-        doctor_status = "UNHEALTHY"
-    elif "WARN" in statuses:
-        doctor_status = "DEGRADED"
-    else:
-        doctor_status = "HEALTHY"
-
-    return {
-        "status": doctor_status,
-        "capabilities": capabilities,
-        "current_settings": settings,
-        "diagnostics": checks,
-    }
+    return diagnostics.run_doctor()
 
 
 def get_config_schema() -> dict:
@@ -148,10 +116,54 @@ def get_config_schema() -> dict:
     }
 
 
-def main() -> None:
+def handle_setup_local() -> dict:
+    """Return deterministic instructions without installing or prompting."""
+    return {
+        "schema_version": "1.0",
+        "status": "READY",
+        "supported_native_platform": "macOS 14+ on Apple Silicon",
+        "next_commands": [
+            "python3 server/agent_cli.py doctor --json",
+            "python3 server/agent_cli.py tune --json",
+            "zsh runtime/setup-runtime.sh",
+            "zsh install.sh",
+            "python3 server/agent_cli.py doctor --json",
+        ],
+        "optional_gateway_commands": [
+            "python3 -m pip install -r server/requirements.txt",
+            "python3 server/app.py",
+        ],
+        "human_steps": [
+            "Grant Microphone permission to NexVoice in System Settings.",
+            "Grant Accessibility permission to NexVoice in System Settings.",
+        ],
+        "windows_status": (
+            "The authenticated HTTP gateway can be used by Windows clients, "
+            "but the native NexVoice HUD app and MLX runtime currently require macOS."
+        ),
+    }
+
+
+def main() -> int:
     parser = argparse.ArgumentParser(description="NexVoice Agent CLI")
-    parser.add_argument("command", choices=["capabilities", "doctor", "config-schema"])
-    parser.add_argument("--json", action="store_true", default=True, help="Output JSON")
+    parser.add_argument(
+        "command",
+        choices=["capabilities", "doctor", "config-schema", "tune", "setup-local"],
+    )
+    parser.add_argument("--json", action="store_true", help="Output JSON (default)")
+    parser.add_argument("--bench", action="store_true", help="Run a real MLX benchmark")
+    parser.add_argument("--sample", help="WAV sample for --bench (max 30s / 10MB)")
+    parser.add_argument(
+        "--allow-download",
+        action="store_true",
+        help="Allow benchmark to download a missing model",
+    )
+    parser.add_argument("--apply", action="store_true", help="Apply local model settings")
+    parser.add_argument(
+        "--config",
+        default=str(autotune.DEFAULT_CONFIG_PATH),
+        help="JSON config path used by tune --apply",
+    )
 
     args = parser.parse_args()
 
@@ -161,11 +173,22 @@ def main() -> None:
         res = get_doctor()
     elif args.command == "config-schema":
         res = get_config_schema()
+    elif args.command == "tune":
+        res = autotune.run_tune(
+            bench=args.bench,
+            apply=args.apply,
+            config_path=args.config,
+            sample_path=args.sample,
+            allow_download=args.allow_download,
+        )
+    elif args.command == "setup-local":
+        res = handle_setup_local()
     else:
         res = {}
 
     print(json.dumps(res, indent=2, ensure_ascii=False))
+    return 2 if res.get("status") == "BLOCKED" else 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
