@@ -31,10 +31,11 @@ jobs:
         run: zsh macos/scripts/package-release.sh
 
       - name: Inspect artifacts
+        working-directory: dist/release
         run: |
-          codesign --verify --deep --strict dist/NexVoice.app
-          shasum -a 256 -c dist/release/SHA256SUMS
-          ls -lh dist/release
+          codesign --verify --deep --strict ../NexVoice.app
+          shasum -a 256 -c SHA256SUMS
+          ls -lh
 
       - name: Upload CI artifact
         uses: actions/upload-artifact@v4
