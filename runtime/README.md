@@ -5,10 +5,10 @@ It listens only on `127.0.0.1`, accepts bounded base64 audio bytes (never a
 user file path), requires `X-NexVoice-Local-Token`, and returns a transcript.
 
 On Apple Silicon, install the pinned `runtime/requirements.txt` into a private
-virtual environment and set `NEXVOICE_MLX_MODEL` to a verified model revision.
-The repository deliberately does not include model weights. A public binary
-release must publish the exact model revision, SHA-256, and license in
-`model-manifest.json`.
+virtual environment. The setup script downloads the exact 40-character upstream
+revision recorded in `model-manifest.json` and writes its local snapshot path
+for the App. The repository deliberately does not redistribute model weights;
+therefore the manifest does not claim a single archive SHA-256.
 
 Example development launch:
 

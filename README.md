@@ -93,9 +93,14 @@
 
 到 [Releases](../../releases/latest) 下載：
 
-- `NexVoice-<version>-macOS.zip`：解壓後取得 App。
-- `NexVoice-<version>-macOS.dmg`：掛載後拖入 `~/Applications`。
+- `NexVoice-<version>-macOS.zip`：解壓後點兩下 `Install NexVoice.command`。
+- `NexVoice-<version>-macOS.dmg`：掛載後點兩下 `Install NexVoice.command`。
 - `SHA256SUMS`：核對下載檔案完整性。
+
+Installer 會把 App 放進 `~/Applications`、建立私有 MLX Python 環境，並下載
+`model-manifest.json` 鎖定的上游模型 revision。模型權重不包在 GitHub Release
+裡，所以第一次安裝需要網路；完成後本機轉錄可離線使用。只拖曳 App 而不執行
+Installer，Runtime 不會完成配置。
 
 目前公開社群包為 **ad-hoc 簽章、未 notarize**；第一次開啟可能需要在
 「系統設定 → 隱私權與安全性」確認。正式 Developer ID/notarization 狀態會在每個
@@ -143,7 +148,8 @@ Auto-tune 安全保證：
 - 只修改 `local_model` 與 `cleanup_local_model`。
 - 保留 `privacy_mode`、`cloud_enabled`、provider 設定與未知欄位。
 - 拒絕 symlink、非 JSON object 與超大設定檔。
-- 同目錄暫存、`fsync`、原子替換、驗證失敗時位元組完全回滾。
+- 同目錄暫存、`fsync`、原子替換，並同步 Gateway 實際使用的 SQLite 設定。
+- JSON 或資料庫啟用失敗時回滾，不會只顯示 APPLIED 卻保留舊模型。
 - Benchmark 只報告真實測量；沒有 WAV、依賴或快取模型就回傳 `NOT_RUN`。
 - 除非明確傳入 `--allow-download`，不會為 benchmark 下載模型。
 

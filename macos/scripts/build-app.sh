@@ -27,16 +27,25 @@ if [[ -d "$RUNTIME_SRC" ]]; then
   mkdir -p "$APP_DIR/Contents/Resources/NexVoiceRuntime"
   cp "$RUNTIME_SRC/nexvoice_local_runtime.py" "$APP_DIR/Contents/Resources/NexVoiceRuntime/"
   cp "$RUNTIME_SRC/model-manifest.json" "$APP_DIR/Contents/Resources/NexVoiceRuntime/"
+  cp "$RUNTIME_SRC/setup-runtime.sh" "$APP_DIR/Contents/Resources/NexVoiceRuntime/"
+  cp "$RUNTIME_SRC/requirements.txt" "$APP_DIR/Contents/Resources/NexVoiceRuntime/"
+  chmod 755 "$APP_DIR/Contents/Resources/NexVoiceRuntime/setup-runtime.sh"
   RUNTIME_BUILD="sha256:$(shasum -a 256 "$APP_DIR/Contents/Resources/NexVoiceRuntime/nexvoice_local_runtime.py" | awk '{print $1}')"
   printf '{"schema":1,"contract_version":2,"runtime_build":"%s"}\n' \
     "$RUNTIME_BUILD" \
     > "$APP_DIR/Contents/Resources/NexVoiceRuntime/runtime-contract.json"
-if [[ "$BUILD_KIND" == "release" ]]; then
+if [[ "$BUILD_KIND" != "dev" ]]; then
     /usr/bin/python3 - "$APP_DIR/Contents/Resources/NexVoiceRuntime/model-manifest.json" <<'PY'
-import json, sys
+import json, re, sys
 data = json.load(open(sys.argv[1]))
-if data.get("revision") in (None, "", "pin-before-release") or data.get("sha256") in (None, "", "pin-before-release", "directory-manifest-required-before-release"):
-    raise SystemExit("release build requires pinned model revision and sha256")
+if not re.fullmatch(r"[0-9a-f]{40}", str(data.get("revision", ""))):
+    raise SystemExit("release build requires an exact model revision")
+if data.get("weights_bundled") is not False:
+    raise SystemExit("community release must not claim model weights are bundled")
+if data.get("sha256") is not None:
+    raise SystemExit("unbundled model manifest must not claim an archive sha256")
+if data.get("integrity") != "pinned-upstream-git-revision":
+    raise SystemExit("release build requires pinned upstream integrity metadata")
 PY
   fi
 fi
@@ -76,15 +85,15 @@ LOGIN_KEYCHAIN="$HOME/Library/Keychains/login.keychain-db"
 SIGN_KEYCHAIN=${NEXVOICE_SIGN_KEYCHAIN:-$LOGIN_KEYCHAIN}
 
 SIGN_IDENTITY=${NEXVOICE_SIGN_IDENTITY:-}
-if [[ -z "$SIGN_IDENTITY" && "$BUILD_KIND" != "dev" ]]; then
+if [[ -z "$SIGN_IDENTITY" && "$BUILD_KIND" != "dev" && "$BUILD_KIND" != "community" ]]; then
   SIGN_IDENTITY=$(security find-identity -v -p codesigning "$SIGN_KEYCHAIN" 2>/dev/null \
     | sed -n 's/.*"\(Developer ID Application:[^"]*\)".*/\1/p' \
     | head -1)
 fi
-if [[ "$SIGN_IDENTITY" == "-" && "$BUILD_KIND" == "dev" ]]; then
-  echo "warning: creating an explicitly requested ad-hoc dev build" >&2
+if [[ "$SIGN_IDENTITY" == "-" && ( "$BUILD_KIND" == "dev" || "$BUILD_KIND" == "community" ) ]]; then
+  echo "warning: creating an explicitly requested ad-hoc $BUILD_KIND build" >&2
 elif [[ -z "$SIGN_IDENTITY" ]] || ! security find-identity -v -p codesigning "$SIGN_KEYCHAIN" 2>/dev/null | grep -qF "$SIGN_IDENTITY"; then
-  if [[ "$BUILD_KIND" == "dev" ]]; then
+  if [[ "$BUILD_KIND" == "dev" || "$BUILD_KIND" == "community" ]]; then
     # Prefer a real identity in the login keychain over ad-hoc: ad-hoc
     # (`--sign -`) pins TCC's designated requirement to the executable's
     # cdhash, which changes on every rebuild and silently re-resets every
@@ -123,7 +132,7 @@ else
 fi
 
 codesign --verify --deep --strict "$APP_DIR"
-if [[ "$BUILD_KIND" != "dev" ]]; then
+if [[ "$BUILD_KIND" != "dev" && "$BUILD_KIND" != "community" ]]; then
   TEAM_ID=$(codesign -dvv "$APP_DIR" 2>&1 | sed -n 's/^TeamIdentifier=//p')
   EXPECTED_TEAM_ID=${NEXVOICE_EXPECTED_TEAM_ID:-}
   if [[ -z "$TEAM_ID" ]]; then

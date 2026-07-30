@@ -12,11 +12,13 @@ import nexvoice_local_runtime as runtime
 
 
 class RuntimeContractTests(unittest.TestCase):
-    def test_model_manifest_is_explicitly_unpinned_until_release(self):
+    def test_model_manifest_pins_upstream_revision_without_claiming_bundled_weights(self):
         manifest = json.loads((Path(__file__).parent / "model-manifest.json").read_text())
         self.assertEqual(manifest["schema"], 1)
-        self.assertIn("revision", manifest)
-        self.assertIn("sha256", manifest)
+        self.assertRegex(manifest["revision"], r"^[0-9a-f]{40}$")
+        self.assertIs(manifest["weights_bundled"], False)
+        self.assertIsNone(manifest["sha256"])
+        self.assertEqual(manifest["integrity"], "pinned-upstream-git-revision")
 
     def test_transcribe_hook_receives_bytes_not_path(self):
         seen = {}

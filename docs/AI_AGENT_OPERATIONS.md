@@ -34,6 +34,8 @@ python3 server/agent_cli.py tune --json --apply --config ./config.json
 
 ### 套用原則
 - 僅修訂 `local_model` 與 `cleanup_local_model` 等本機模型設置。
+- 同步更新 JSON 與 Gateway 實際讀取的 SQLite settings；回傳的
+  `database_path` 與 `activated_settings` 可供 Agent 驗證。
 - 絕不更動隱私模式 (`privacy_mode`) 或雲端開關 (`cloud_enabled`)。
 - 具備冪等性 (Idempotent)，重複執行不會破壞配置。
 - 8 GB 建議 `whisper-small`；16 GB 以上建議 `whisper-large-v3-turbo`。

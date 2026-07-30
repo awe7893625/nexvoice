@@ -54,25 +54,47 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "gemini_api_key_env": "GEMINI_API_KEY",
     "cloud_model": "gemini-2.5-flash",
     "local_model": "mlx-community/whisper-large-v3-turbo",
-    "cleanup_ollama_model": "qwen2.5:3b",
+    "cleanup_local_model": "qwen2.5:3b",
     "db_path": str(_PROJECT_ROOT / "data" / "nexvoice.db"),
 }
 
 
 def _load_config() -> dict[str, Any]:
     cfg = dict(DEFAULT_CONFIG)
+    loaded_override: dict[str, Any] = {}
     candidates = [
-        _PROJECT_ROOT / "config.json",
+        Path(
+            os.environ.get(
+                "NEXVOICE_CONFIG_PATH",
+                str(_PROJECT_ROOT / "config.json"),
+            )
+        ).expanduser(),
     ]
     for path in candidates:
         if path.exists():
             try:
                 with open(path) as f:
                     override = json.load(f)
+                if not isinstance(override, dict):
+                    raise ValueError("config root must be an object")
+                loaded_override = override
                 cfg.update(override)
                 break
             except Exception as exc:
                 logging.warning("Could not load config from %s: %s", path, exc)
+    # Preserve the old key for existing configs, but expose one canonical key
+    # to settings, doctor, and auto-tune.
+    if (
+        "cleanup_local_model" not in loaded_override
+        and "cleanup_ollama_model" in loaded_override
+    ):
+        cfg["cleanup_local_model"] = loaded_override["cleanup_ollama_model"]
+    if os.environ.get("NEXVOICE_DB_PATH"):
+        cfg["db_path"] = os.environ["NEXVOICE_DB_PATH"]
+    db_path = Path(str(cfg["db_path"])).expanduser()
+    cfg["db_path"] = str(
+        db_path if db_path.is_absolute() else _PROJECT_ROOT / db_path
+    )
     return cfg
 
 
@@ -230,6 +252,7 @@ async def _startup() -> None:  # type: ignore[misc]
         defaults={
             "cloud_model": CONFIG["cloud_model"],
             "local_model": CONFIG["local_model"],
+            "cleanup_local_model": CONFIG["cleanup_local_model"],
         },
     )
     vocab_store.reload()

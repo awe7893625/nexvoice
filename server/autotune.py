@@ -6,6 +6,7 @@ import json
 import os
 import platform
 import shutil
+import sqlite3
 import subprocess
 import tempfile
 import time
@@ -24,6 +25,7 @@ DEFAULT_CONFIG_PATH = Path(
 MAX_CONFIG_BYTES = 1024 * 1024
 MAX_SAMPLE_BYTES = 10 * 1024 * 1024
 MAX_SAMPLE_SECONDS = 30.0
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 
 def _sysctl_value(name: str) -> str:
@@ -199,6 +201,53 @@ def _atomic_write_bytes(path: Path, payload: bytes) -> None:
         raise
 
 
+def _gateway_db_path(config: dict[str, Any], config_path: Path) -> Path:
+    configured = os.environ.get("NEXVOICE_DB_PATH") or config.get("db_path")
+    if configured:
+        path = Path(str(configured)).expanduser()
+        return path if path.is_absolute() else _PROJECT_ROOT / path
+    if config_path.resolve() == DEFAULT_CONFIG_PATH.resolve():
+        return _PROJECT_ROOT / "data" / "nexvoice.db"
+    return config_path.parent / "data" / "nexvoice.db"
+
+
+def _sync_gateway_settings(db_path: Path, patch: dict[str, str]) -> bool:
+    """Apply the approved local-model patch to the SQLite state Gateway reads."""
+    if db_path.is_symlink():
+        raise ValueError("refusing to update a symlinked gateway database")
+    parent_was_missing = not db_path.parent.exists()
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    if parent_was_missing:
+        os.chmod(db_path.parent, 0o700)
+
+    changed = False
+    connection = sqlite3.connect(db_path)
+    try:
+        connection.execute(
+            "CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)"
+        )
+        for key, value in patch.items():
+            row = connection.execute(
+                "SELECT value FROM settings WHERE key = ?", (key,)
+            ).fetchone()
+            changed = changed or row is None or row[0] != value
+            connection.execute(
+                """
+                INSERT INTO settings (key, value) VALUES (?, ?)
+                ON CONFLICT(key) DO UPDATE SET value = excluded.value
+                """,
+                (key, value),
+            )
+        connection.commit()
+    except Exception:
+        connection.rollback()
+        raise
+    finally:
+        connection.close()
+    os.chmod(db_path, 0o600)
+    return changed
+
+
 def apply_config(
     recommendation: dict[str, Any],
     *,
@@ -216,40 +265,41 @@ def apply_config(
     }
     updated = {**current, **safe_patch}
     payload = (json.dumps(updated, indent=2, ensure_ascii=False) + "\n").encode()
-
-    if original == payload:
-        return {
-            "status": "UNCHANGED",
-            "changed": False,
-            "config_path": str(path),
-            "config": updated,
-        }
+    db_path = _gateway_db_path(updated, path)
 
     backup = path.with_suffix(path.suffix + ".bak")
     temp_name: str | None = None
+    backup_written = False
     try:
-        if original is not None:
-            if backup.is_symlink():
-                raise ValueError("refusing to overwrite a symlinked config backup")
-            _atomic_write_bytes(backup, original)
+        config_changed = original != payload
+        if config_changed:
+            if original is not None:
+                if backup.is_symlink():
+                    raise ValueError("refusing to overwrite a symlinked config backup")
+                _atomic_write_bytes(backup, original)
+                backup_written = True
+            fd, temp_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=parent)
+            with os.fdopen(fd, "wb") as stream:
+                stream.write(payload)
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.chmod(temp_name, 0o600)
+            os.replace(temp_name, path)
+            temp_name = None
 
-        fd, temp_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=parent)
-        with os.fdopen(fd, "wb") as stream:
-            stream.write(payload)
-            stream.flush()
-            os.fsync(stream.fileno())
-        os.chmod(temp_name, 0o600)
-        os.replace(temp_name, path)
-        temp_name = None
+            verified, _ = _read_config(path)
+            if verified != updated:
+                raise OSError("post-write config verification failed")
 
-        verified, _ = _read_config(path)
-        if verified != updated:
-            raise OSError("post-write config verification failed")
+        database_changed = _sync_gateway_settings(db_path, safe_patch)
+        changed = config_changed or database_changed
         return {
-            "status": "APPLIED",
-            "changed": True,
+            "status": "APPLIED" if changed else "UNCHANGED",
+            "changed": changed,
             "config_path": str(path),
             "backup_path": str(backup) if original is not None else None,
+            "database_path": str(db_path),
+            "activated_settings": safe_patch,
             "config": updated,
         }
     except Exception:
@@ -258,7 +308,7 @@ def apply_config(
                 path.unlink(missing_ok=True)
             except OSError:
                 pass
-        elif backup.exists():
+        elif backup_written and backup.exists():
             os.replace(backup, path)
         raise
     finally:

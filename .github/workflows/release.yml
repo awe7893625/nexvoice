@@ -19,7 +19,7 @@ jobs:
     runs-on: macos-14
     env:
       NEXVOICE_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.version || github.ref_name }}
-      NEXVOICE_BUILD_KIND: dev
+      NEXVOICE_BUILD_KIND: community
     steps:
       - uses: actions/checkout@v4
 

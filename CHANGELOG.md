@@ -19,6 +19,8 @@
 - 新增根目錄 `AGENTS.md`、`SKILL.md` 與 AI 維運文件。
 - 新增 GitHub 內嵌的 21 款 HUD 實際 renderer 截圖。
 - 新增 macOS ZIP/DMG、SHA256SUMS 與 GitHub Release workflow。
+- 新增 fresh-Mac Installer，可建立私有 MLX runtime 並下載鎖定 revision 的模型。
+- Auto-tune 現在同步 JSON 與 Gateway SQLite，不再只改未生效的設定檔。
 
 ### Changed
 

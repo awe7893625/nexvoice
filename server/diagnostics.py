@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import os
 import platform
 import shutil
@@ -18,6 +19,33 @@ import settings_store
 
 SCHEMA_VERSION = "1.0"
 VALID_CHECK_STATUSES = {"PASS", "WARN", "FAIL", "HUMAN", "BLOCKED"}
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+
+def _gateway_db_path() -> Path:
+    if configured := os.environ.get("NEXVOICE_DB_PATH"):
+        return Path(configured).expanduser()
+    config_path = Path(
+        os.environ.get("NEXVOICE_CONFIG_PATH", str(_PROJECT_ROOT / "config.json"))
+    ).expanduser()
+    configured_db: str | None = None
+    try:
+        if (
+            config_path.is_file()
+            and not config_path.is_symlink()
+            and config_path.stat().st_size <= 1024 * 1024
+        ):
+            config = json.loads(config_path.read_text(encoding="utf-8"))
+            if isinstance(config, dict) and isinstance(config.get("db_path"), str):
+                configured_db = config["db_path"]
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        configured_db = None
+    path = Path(configured_db or (_PROJECT_ROOT / "data" / "nexvoice.db")).expanduser()
+    return path if path.is_absolute() else _PROJECT_ROOT / path
+
+
+def _runtime_venv_path() -> Path:
+    return Path.home() / ".cache" / "nexvoice" / "runtime" / ".venv"
 
 
 def _check(
@@ -160,10 +188,7 @@ def _model_cache_check(model: str) -> dict[str, Any]:
 
 def run_doctor() -> dict[str, Any]:
     """Run bounded checks without TCC prompts, credential dialogs, or downloads."""
-    db_path = os.environ.get(
-        "NEXVOICE_DB_PATH",
-        str(Path.home() / ".cache" / "nexvoice" / "nexvoice.db"),
-    )
+    db_path = str(_gateway_db_path())
     if os.environ.get("NEXVOICE_DB_PATH") or not db.is_initialized():
         db.init_db(db_path)
     current_settings = settings_store.to_dict(settings_store.load())
@@ -256,7 +281,7 @@ def run_doctor() -> dict[str, Any]:
         )
     )
 
-    runtime_venv = Path.home() / ".cache" / "nexvoice" / "runtime" / "venv"
+    runtime_venv = _runtime_venv_path()
     mlx_available = importlib.util.find_spec("mlx_whisper") is not None
     checks.append(
         _check(

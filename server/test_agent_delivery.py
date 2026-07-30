@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
 import subprocess
 import sys
 import wave
@@ -134,6 +135,66 @@ def test_apply_is_atomic_idempotent_and_preserves_private_cloud_fields(
     assert config.with_suffix(".json.bak").read_text(encoding="utf-8") == json.dumps(
         original
     )
+
+
+def test_apply_activates_existing_gateway_database_and_is_idempotent(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "state" / "gateway.db"
+    database.parent.mkdir()
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            "CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT)"
+        )
+        connection.executemany(
+            "INSERT INTO settings (key, value) VALUES (?, ?)",
+            [
+                ("local_model", "mlx-community/whisper-tiny"),
+                ("cleanup_local_model", "qwen3:4b-instruct"),
+            ],
+        )
+    config = tmp_path / "config.json"
+    config.write_text(
+        json.dumps(
+            {
+                "db_path": str(database),
+                "privacy_mode": True,
+                "local_model": "mlx-community/whisper-tiny",
+            }
+        ),
+        encoding="utf-8",
+    )
+    recommendation = {
+        "local_model": "mlx-community/whisper-large-v3-turbo",
+        "cleanup_local_model": "qwen2.5:7b",
+    }
+
+    first = autotune.apply_config(recommendation, config_path=config)
+    second = autotune.apply_config(recommendation, config_path=config)
+
+    with sqlite3.connect(database) as connection:
+        activated = dict(connection.execute("SELECT key, value FROM settings"))
+    assert first["status"] == "APPLIED"
+    assert first["database_path"] == str(database)
+    assert first["activated_settings"] == recommendation
+    assert second["status"] == "UNCHANGED"
+    assert activated["local_model"] == recommendation["local_model"]
+    assert activated["cleanup_local_model"] == recommendation["cleanup_local_model"]
+    assert json.loads(config.read_text())["privacy_mode"] is True
+
+
+def test_doctor_uses_gateway_config_database_and_runtime_dot_venv(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database = tmp_path / "gateway.db"
+    config = tmp_path / "config.json"
+    config.write_text(json.dumps({"db_path": str(database)}), encoding="utf-8")
+    monkeypatch.delenv("NEXVOICE_DB_PATH", raising=False)
+    monkeypatch.setenv("NEXVOICE_CONFIG_PATH", str(config))
+
+    assert diagnostics._gateway_db_path() == database
+    assert diagnostics._runtime_venv_path().name == ".venv"
 
 
 def test_apply_rejects_symlink_and_non_object_config(tmp_path: Path) -> None:

@@ -98,7 +98,7 @@ curl -s -H "X-NexVoice-Token: $CAT_TOKEN" \
 - **Privacy / Local-first**: Set `privacy_mode: true` to enforce 100% offline transcription.
 - **Gateway STT**: Gateway STT cloud provider is Gemini only (`GEMINI_API_KEY`).
 - **Cleanup engines**: Text cleanup can use local Ollama (`cleanup_local_model`) and optional Groq/NIM/Gemini cloud models when `cloud_enabled: true` and `privacy_mode: false`. Note: `OPENAI_API_KEY` is not a gateway provider.
-- **Safe auto-tune**: `tune` is a dry run unless `--apply` is present. Apply changes only `local_model` and `cleanup_local_model`, preserves all cloud/privacy and unknown fields, and writes the JSON config atomically.
+- **Safe auto-tune**: `tune` is a dry run unless `--apply` is present. Apply changes only `local_model` and `cleanup_local_model`, preserves all cloud/privacy and unknown fields, writes the JSON config atomically, and activates the same values in the Gateway SQLite settings.
 - **Windows**: Windows clients can call the authenticated Gateway API. The native HUD app and local MLX runtime currently require Apple Silicon macOS; do not claim a Windows EXE exists.
 
 ## Rollback & Uninstall
