@@ -8,7 +8,7 @@ DEST_APP="$APPLICATIONS_DIR/NexVoice.app"
 TEMP_APP="$APPLICATIONS_DIR/.NexVoice.installing.$$"
 BACKUP_APP="$APPLICATIONS_DIR/.NexVoice.backup.$$"
 STATE_DIR="$HOME/.cache/nexvoice"
-LOCK_DIR="$STATE_DIR/community-install.lock"
+LOCK_FILE="$STATE_DIR/community-install.pid"
 
 if [[ "$(uname -s)" != "Darwin" || "$(uname -m)" != "arm64" ]]; then
   print -u2 "NexVoice 原生 App 目前需要 Apple Silicon macOS。"
@@ -22,24 +22,16 @@ fi
 mkdir -p "$APPLICATIONS_DIR"
 mkdir -p "$STATE_DIR"
 chmod 700 "$STATE_DIR"
-if ! mkdir "$LOCK_DIR" 2>/dev/null; then
-  OLD_PID=""
-  [[ -f "$LOCK_DIR/pid" ]] && OLD_PID=$(cat "$LOCK_DIR/pid" 2>/dev/null || true)
-  if [[ -z "$OLD_PID" ]]; then
-    print -u2 "NexVoice Installer lock 存在；請稍後重試。"
-    exit 1
-  fi
-  if kill -0 "$OLD_PID" 2>/dev/null; then
-    print -u2 "另一個 NexVoice Installer 正在執行（pid $OLD_PID）。"
-    exit 1
-  fi
-  rm -rf "$LOCK_DIR"
-  mkdir "$LOCK_DIR"
+if ! /usr/bin/shlock -f "$LOCK_FILE" -p "$$"; then
+  LOCK_PID=$(cat "$LOCK_FILE" 2>/dev/null || print "unknown")
+  print -u2 "另一個 NexVoice Installer 正在執行（pid $LOCK_PID）。"
+  exit 1
 fi
-print -r -- "$$" > "$LOCK_DIR/pid"
 cleanup() {
   rm -rf "$TEMP_APP"
-  rm -rf "$LOCK_DIR"
+  if [[ -f "$LOCK_FILE" ]] && [[ "$(cat "$LOCK_FILE" 2>/dev/null)" == "$$" ]]; then
+    rm -f "$LOCK_FILE"
+  fi
 }
 trap cleanup EXIT
 
