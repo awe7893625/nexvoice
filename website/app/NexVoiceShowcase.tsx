@@ -945,9 +945,10 @@ export default function NexVoiceShowcase() {
             <svg className="w-4 h-4 fill-current" viewBox="0 0 16 16" aria-hidden="true">
               <path d="M8 .25a.75.75 0 0 1 .673.418l1.882 3.815 4.21.612a.75.75 0 0 1 .416 1.279l-3.046 2.97.719 4.192a.75.75 0 0 1-1.088.791L8 12.347l-3.766 1.98a.75.75 0 0 1-1.088-.79l.72-4.194L.818 6.374a.75.75 0 0 1 .416-1.28l4.21-.611L7.327.668A.75.75 0 0 1 8 .25z" />
             </svg>
-            <span>Star on GitHub</span>
+            <span className="hidden sm:inline">Star on GitHub</span>
+            <span className="sm:hidden">Star</span>
             {starCount !== null && (
-              <span className="bg-slate-950/30 text-amber-200 text-[10px] px-1.5 py-0.5 rounded-full font-mono">
+              <span className="hidden min-[380px]:inline-block bg-slate-950/30 text-amber-200 text-[10px] px-1.5 py-0.5 rounded-full font-mono">
                 {starCount}
               </span>
             )}
@@ -955,10 +956,9 @@ export default function NexVoiceShowcase() {
           <a
             href="https://github.com/awe7893625/nexvoice/archive/refs/heads/main.zip"
             download
-            className="glass-card px-2.5 sm:px-3.5 py-1.5 sm:py-2 rounded-lg text-xs font-semibold text-slate-200 hover:text-white flex items-center space-x-1.5 border border-white/10"
+            className="hidden sm:flex glass-card px-2.5 sm:px-3.5 py-1.5 sm:py-2 rounded-lg text-xs font-semibold text-slate-200 hover:text-white items-center space-x-1.5 border border-white/10"
           >
-            <span className="hidden sm:inline">下載原始碼 ZIP</span>
-            <span className="sm:hidden">原始碼 ZIP</span>
+            <span>下載原始碼 ZIP</span>
           </a>
           <a
             href="#install"
