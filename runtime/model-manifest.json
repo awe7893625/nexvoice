@@ -1,10 +1,12 @@
 {
   "schema": 1,
   "model": "mlx-community/whisper-large-v3-turbo",
+  "partial_model": "mlx-community/whisper-tiny",
   "task": "automatic-speech-recognition",
   "runtime": "mlx-whisper",
   "download": "Hugging Face snapshot_download at the exact revision below",
   "revision": "a4aaeec0636e6fef84abdcbe3544cb2bf7e9f6fb",
+  "partial_revision": "78c52ab98ca87f570bc57ad852e15ef7060f9f76",
   "weights_bundled": false,
   "sha256": null,
   "integrity": "pinned-upstream-git-revision",

@@ -16,6 +16,8 @@ class RuntimeContractTests(unittest.TestCase):
         manifest = json.loads((Path(__file__).parent / "model-manifest.json").read_text())
         self.assertEqual(manifest["schema"], 1)
         self.assertRegex(manifest["revision"], r"^[0-9a-f]{40}$")
+        self.assertEqual(manifest["partial_model"], "mlx-community/whisper-tiny")
+        self.assertRegex(manifest["partial_revision"], r"^[0-9a-f]{40}$")
         self.assertIs(manifest["weights_bundled"], False)
         self.assertIsNone(manifest["sha256"])
         self.assertEqual(manifest["integrity"], "pinned-upstream-git-revision")

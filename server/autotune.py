@@ -219,6 +219,13 @@ def _sync_gateway_settings(db_path: Path, patch: dict[str, str]) -> bool:
     db_path.parent.mkdir(parents=True, exist_ok=True)
     if parent_was_missing:
         os.chmod(db_path.parent, 0o700)
+    if not db_path.exists():
+        flags = os.O_CREAT | os.O_EXCL | os.O_RDWR
+        if hasattr(os, "O_NOFOLLOW"):
+            flags |= os.O_NOFOLLOW
+        descriptor = os.open(db_path, flags, 0o600)
+        os.close(descriptor)
+    os.chmod(db_path, 0o600)
 
     changed = False
     connection = sqlite3.connect(db_path)
@@ -244,7 +251,6 @@ def _sync_gateway_settings(db_path: Path, patch: dict[str, str]) -> bool:
         raise
     finally:
         connection.close()
-    os.chmod(db_path, 0o600)
     return changed
 
 

@@ -1187,8 +1187,15 @@ private struct SettingsPage: View {
     private var localModelCard: some View {
         VStack(alignment: .leading, spacing: 12) {
             cardHeader("本地 MLX 模型")
-            TextField("Hugging Face / 本地模型名稱", text: $model.localModelName)
-                .textFieldStyle(.roundedBorder)
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Final · whisper-large-v3-turbo")
+                Text("即時字幕 · whisper-tiny")
+            }
+            .font(.system(size: 12, design: .monospaced))
+            .foregroundStyle(NV.ink)
+            Text("兩個模型皆由 Installer 鎖定 revision 並安裝到本機，不在錄音時臨時下載。")
+                .font(.system(size: 11.5))
+                .foregroundStyle(NV.secondary)
             TextField("本地 API endpoint（只允許 127.0.0.1:5112）", text: $model.localEndpoint)
                 .textFieldStyle(.roundedBorder)
             Text("App 以 bytes + token 呼叫本機 runtime，不傳送檔案路徑。")

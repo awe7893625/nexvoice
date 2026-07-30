@@ -20,9 +20,6 @@ final class AppModel: ObservableObject {
     @Published var cloudFallbackEnabled: Bool {
         didSet { defaults.set(cloudFallbackEnabled, forKey: Keys.cloudFallbackEnabled) }
     }
-    @Published var localModelName: String {
-        didSet { defaults.set(localModelName, forKey: LocalRuntimeConfiguration.modelKey) }
-    }
     @Published var localEndpoint: String {
         didSet { defaults.set(localEndpoint, forKey: LocalRuntimeConfiguration.endpointKey) }
     }
@@ -138,8 +135,6 @@ final class AppModel: ObservableObject {
                 : defaults.bool(forKey: Keys.cloudFallbackEnabled)
         }
         self.openAtLogin = defaults.bool(forKey: Keys.openAtLogin)
-        self.localModelName = defaults.string(forKey: LocalRuntimeConfiguration.modelKey)
-            ?? LocalRuntimeConfiguration.defaultModel
         self.localEndpoint = defaults.string(forKey: LocalRuntimeConfiguration.endpointKey)
             ?? LocalRuntimeConfiguration.defaultEndpoint
         let loadedPreferences = ProductPreferencesStore.load(defaults)

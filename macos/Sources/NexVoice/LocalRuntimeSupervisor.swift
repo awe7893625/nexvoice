@@ -48,7 +48,9 @@ final class LocalRuntimeSupervisor {
             lastError = "尚未安裝 MLX runtime，請執行下載包內的 Install NexVoice.command"
             return
         }
-        guard let installedModelPath = LocalRuntimeConfiguration.installedModelPath else {
+        guard let installedModelPath = LocalRuntimeConfiguration.installedModelPath,
+              let installedPartialModelPath = LocalRuntimeConfiguration.installedPartialModelPath
+        else {
             lastError = "找不到已鎖定版本的本機模型，請重新執行 Install NexVoice.command"
             return
         }
@@ -79,6 +81,7 @@ final class LocalRuntimeSupervisor {
         child.environment = ProcessInfo.processInfo.environment.merging([
             "NEXVOICE_LOCAL_PORT": "5112",
             "NEXVOICE_MLX_MODEL": installedModelPath,
+            "NEXVOICE_MLX_PARTIAL_MODEL": installedPartialModelPath,
             "NEXVOICE_RUNTIME_EXPECTED_BUILD": manifest.runtimeBuild,
             "NEXVOICE_RUNTIME_OWNER_NONCE": nonce,
             "NEXVOICE_RUNTIME_PARENT_PID": String(ProcessInfo.processInfo.processIdentifier),

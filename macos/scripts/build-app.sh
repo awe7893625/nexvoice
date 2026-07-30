@@ -40,6 +40,10 @@ import json, re, sys
 data = json.load(open(sys.argv[1]))
 if not re.fullmatch(r"[0-9a-f]{40}", str(data.get("revision", ""))):
     raise SystemExit("release build requires an exact model revision")
+if not re.fullmatch(r"[0-9a-f]{40}", str(data.get("partial_revision", ""))):
+    raise SystemExit("release build requires an exact partial-model revision")
+if not all(isinstance(data.get(key), str) and data[key].strip() for key in ("model", "partial_model")):
+    raise SystemExit("release build requires final and partial model identifiers")
 if data.get("weights_bundled") is not False:
     raise SystemExit("community release must not claim model weights are bundled")
 if data.get("sha256") is not None:

@@ -98,7 +98,7 @@
 - `SHA256SUMS`：核對下載檔案完整性。
 
 Installer 會把 App 放進 `~/Applications`、建立私有 MLX Python 環境，並下載
-`model-manifest.json` 鎖定的上游模型 revision。模型權重不包在 GitHub Release
+`model-manifest.json` 鎖定的 final 與即時字幕模型 revision。模型權重不包在 GitHub Release
 裡，所以第一次安裝需要網路；完成後本機轉錄可離線使用。只拖曳 App 而不執行
 Installer，Runtime 不會完成配置。
 

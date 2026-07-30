@@ -1,19 +1,20 @@
 import Foundation
 
 enum LocalRuntimeConfiguration {
-    static let modelKey = "nexvoice.local.model"
     static let endpointKey = "nexvoice.local.endpoint"
-    static let defaultModel = "mlx-community/whisper-large-v3-turbo"
     static let defaultEndpoint = "http://127.0.0.1:5112"
 
-    static var model: String {
-        let value = UserDefaults.standard.string(forKey: modelKey)?.trimmingCharacters(in: .whitespacesAndNewlines)
-        return value?.isEmpty == false ? value! : defaultModel
+    static var installedModelPath: String? {
+        installedPath(named: "model-path")
     }
 
-    static var installedModelPath: String? {
+    static var installedPartialModelPath: String? {
+        installedPath(named: "partial-model-path")
+    }
+
+    private static func installedPath(named name: String) -> String? {
         let file = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".cache/nexvoice/runtime/model-path")
+            .appendingPathComponent(".cache/nexvoice/runtime/\(name)")
         guard let values = try? file.resourceValues(
             forKeys: [.isRegularFileKey, .isSymbolicLinkKey]
         ),
