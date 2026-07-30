@@ -861,7 +861,21 @@ export default function NexVoiceShowcase() {
   const [appState, setAppState] = useState<"ready" | "recording" | "processing" | "done">("recording");
   const [elapsedTime, setElapsedTime] = useState(1.8);
   const [isCompareMode, setIsCompareMode] = useState(false);
+  const [starCount, setStarCount] = useState<number | null>(null);
   const compareList = [1, 8, 13]; // GlassBars, Siri, Mercury
+
+  useEffect(() => {
+    fetch("https://api.github.com/repos/awe7893625/nexvoice")
+      .then((res) => res.json())
+      .then((data) => {
+        if (typeof data.stargazers_count === "number") {
+          setStarCount(data.stargazers_count);
+        }
+      })
+      .catch(() => {
+        // Fallback silently if fetch fails
+      });
+  }, []);
 
   // Elapsed time counter simulation
   useEffect(() => {
@@ -923,7 +937,23 @@ export default function NexVoiceShowcase() {
 
         <div className="flex items-center space-x-1.5 sm:space-x-3 shrink-0">
           <a
-            href="/nexvoice-source.zip"
+            href="https://github.com/awe7893625/nexvoice"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-bold px-3 sm:px-4 py-1.5 sm:py-2 rounded-lg shadow-lg shadow-amber-500/20 transition-all hover:scale-105 flex items-center space-x-1.5 text-xs"
+          >
+            <svg className="w-4 h-4 fill-current" viewBox="0 0 16 16" aria-hidden="true">
+              <path d="M8 .25a.75.75 0 0 1 .673.418l1.882 3.815 4.21.612a.75.75 0 0 1 .416 1.279l-3.046 2.97.719 4.192a.75.75 0 0 1-1.088.791L8 12.347l-3.766 1.98a.75.75 0 0 1-1.088-.79l.72-4.194L.818 6.374a.75.75 0 0 1 .416-1.28l4.21-.611L7.327.668A.75.75 0 0 1 8 .25z" />
+            </svg>
+            <span>Star on GitHub</span>
+            {starCount !== null && (
+              <span className="bg-slate-950/30 text-amber-200 text-[10px] px-1.5 py-0.5 rounded-full font-mono">
+                {starCount}
+              </span>
+            )}
+          </a>
+          <a
+            href="https://github.com/awe7893625/nexvoice/archive/refs/heads/main.zip"
             download
             className="glass-card px-2.5 sm:px-3.5 py-1.5 sm:py-2 rounded-lg text-xs font-semibold text-slate-200 hover:text-white flex items-center space-x-1.5 border border-white/10"
           >
@@ -957,7 +987,7 @@ export default function NexVoiceShowcase() {
 
         <div className="flex flex-wrap items-center justify-center gap-3 sm:gap-4 mb-10 sm:mb-14" id="install">
           <a
-            href="/nexvoice-source.zip"
+            href="https://github.com/awe7893625/nexvoice/archive/refs/heads/main.zip"
             download
             className="bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold px-5 sm:px-7 py-3 sm:py-3.5 rounded-xl shadow-xl shadow-cyan-500/25 transition-all hover:scale-105 text-sm w-full sm:w-auto"
           >
@@ -1495,7 +1525,33 @@ export default function NexVoiceShowcase() {
       </section>
 
       {/* Footer */}
-      <footer className="py-8 px-6 border-t border-white/10 text-center text-xs text-slate-500">
+      <footer className="py-8 px-6 border-t border-white/10 text-center text-xs text-slate-500 flex flex-col items-center gap-3">
+        <div className="flex items-center space-x-6 text-slate-400 font-medium">
+          <a
+            href="https://github.com/awe7893625/nexvoice"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="hover:text-cyan-400 transition-colors"
+          >
+            Source
+          </a>
+          <a
+            href="https://github.com/awe7893625/nexvoice/issues"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="hover:text-cyan-400 transition-colors"
+          >
+            Issues
+          </a>
+          <a
+            href="https://github.com/awe7893625/nexvoice/releases"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="hover:text-cyan-400 transition-colors"
+          >
+            Releases
+          </a>
+        </div>
         <p>NexVoice Open Source · MIT License · Clean Codebase Claims Preserved</p>
       </footer>
     </main>
