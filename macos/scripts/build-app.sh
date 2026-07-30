@@ -81,7 +81,9 @@ if [[ -z "$SIGN_IDENTITY" && "$BUILD_KIND" != "dev" ]]; then
     | sed -n 's/.*"\(Developer ID Application:[^"]*\)".*/\1/p' \
     | head -1)
 fi
-if [[ -z "$SIGN_IDENTITY" ]] || ! security find-identity -v -p codesigning "$SIGN_KEYCHAIN" 2>/dev/null | grep -qF "$SIGN_IDENTITY"; then
+if [[ "$SIGN_IDENTITY" == "-" && "$BUILD_KIND" == "dev" ]]; then
+  echo "warning: creating an explicitly requested ad-hoc dev build" >&2
+elif [[ -z "$SIGN_IDENTITY" ]] || ! security find-identity -v -p codesigning "$SIGN_KEYCHAIN" 2>/dev/null | grep -qF "$SIGN_IDENTITY"; then
   if [[ "$BUILD_KIND" == "dev" ]]; then
     # Prefer a real identity in the login keychain over ad-hoc: ad-hoc
     # (`--sign -`) pins TCC's designated requirement to the executable's

@@ -1,0 +1,59 @@
+name: release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version label without v prefix
+        required: true
+        default: 1.1.0
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  macos-community-artifacts:
+    runs-on: macos-14
+    env:
+      NEXVOICE_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.version || github.ref_name }}
+      NEXVOICE_BUILD_KIND: dev
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Swift tests
+        working-directory: macos
+        run: swift test
+
+      - name: Build ad-hoc community ZIP and DMG
+        run: zsh macos/scripts/package-release.sh
+
+      - name: Inspect artifacts
+        run: |
+          codesign --verify --deep --strict dist/NexVoice.app
+          shasum -a 256 -c dist/release/SHA256SUMS
+          ls -lh dist/release
+
+      - name: Upload CI artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: NexVoice-${{ env.NEXVOICE_VERSION }}-macOS-community
+          path: |
+            dist/release/*.zip
+            dist/release/*.dmg
+            dist/release/SHA256SUMS
+
+      - name: Publish tagged GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" \
+            --title "NexVoice ${GITHUB_REF_NAME}" \
+            --notes-file CHANGELOG.md \
+            --prerelease \
+            dist/release/*.zip \
+            dist/release/*.dmg \
+            dist/release/SHA256SUMS

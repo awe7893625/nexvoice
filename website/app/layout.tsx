@@ -13,7 +13,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  metadataBase: new URL("https://awe7893625.github.io/nexvoice/"),
+  metadataBase: new URL("https://nexvoice-ai.movielin8866.workers.dev/"),
   title: "NexVoice — 本地優先 Apple Silicon 語音聽寫 macOS App",
   description: "極速熱鍵錄音、預設 100% 本機零費用 Whisper 轉錄，支援 Gateway (Gemini 雲端 STT、Groq/NIM/Gemini 文本潤飾) 與 App 雲端整合，提供 21 款炫彩 HUD 動態介面與 7 種外框。",
   openGraph: {
@@ -56,4 +56,3 @@ export default function RootLayout({
     </html>
   );
 }
-

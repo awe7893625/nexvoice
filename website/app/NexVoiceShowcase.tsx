@@ -954,11 +954,11 @@ export default function NexVoiceShowcase() {
             )}
           </a>
           <a
-            href="https://github.com/awe7893625/nexvoice/archive/refs/heads/main.zip"
+            href="https://github.com/awe7893625/nexvoice/releases/latest"
             download
             className="hidden sm:flex glass-card px-2.5 sm:px-3.5 py-1.5 sm:py-2 rounded-lg text-xs font-semibold text-slate-200 hover:text-white items-center space-x-1.5 border border-white/10"
           >
-            <span>下載原始碼 ZIP</span>
+            <span>下載最新版</span>
           </a>
           <a
             href="#install"
@@ -987,11 +987,10 @@ export default function NexVoiceShowcase() {
 
         <div className="flex flex-wrap items-center justify-center gap-3 sm:gap-4 mb-10 sm:mb-14" id="install">
           <a
-            href="https://github.com/awe7893625/nexvoice/archive/refs/heads/main.zip"
-            download
+            href="https://github.com/awe7893625/nexvoice/releases/latest"
             className="bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold px-5 sm:px-7 py-3 sm:py-3.5 rounded-xl shadow-xl shadow-cyan-500/25 transition-all hover:scale-105 text-sm w-full sm:w-auto"
           >
-            下載乾淨原始碼 ZIP
+            下載 macOS ZIP / DMG
           </a>
           <a
             href="#hud-gallery"
@@ -1373,7 +1372,7 @@ export default function NexVoiceShowcase() {
               </div>
               <h4 className="font-bold text-base text-white mb-2">AI Agent 3步驟自動配置</h4>
               <p className="text-xs text-slate-300 leading-relaxed">
-                內建 CLI / REST 自動化介面，讓 AI Agent 輕鬆完成環境探測、Doctor 檢查與 Schema 驗證。
+                內建 CLI / REST 自動化介面，讓 AI Agent 完成 Doctor、硬體自動調優與本地安裝驗證。
               </p>
             </div>
             <div className="mt-4 pt-3 border-t border-white/5 text-[11px] font-mono text-purple-400">
@@ -1455,9 +1454,9 @@ export default function NexVoiceShowcase() {
             <div className="w-8 h-8 rounded-lg bg-cyan-500/20 border border-cyan-500/40 text-cyan-300 flex items-center justify-center font-mono font-bold text-sm mb-4">
               01
             </div>
-            <h4 className="text-base font-semibold text-white mb-2">自動偵測環境能力</h4>
+            <h4 className="text-base font-semibold text-white mb-2">Secret-safe Doctor</h4>
             <p className="text-xs text-slate-400 leading-relaxed mb-3">
-              執行 `python3 server/agent_cli.py capabilities` 探測本機 MLX 與 Ollama 算力。
+              執行 `python3 server/agent_cli.py doctor --json` 檢查系統、算力、Runtime、Token 與人工作業邊界，絕不印出金鑰值。
             </p>
           </div>
 
@@ -1465,9 +1464,9 @@ export default function NexVoiceShowcase() {
             <div className="w-8 h-8 rounded-lg bg-cyan-500/20 border border-cyan-500/40 text-cyan-300 flex items-center justify-center font-mono font-bold text-sm mb-4">
               02
             </div>
-            <h4 className="text-base font-semibold text-white mb-2">一鍵健康檢查 Doctor</h4>
+            <h4 className="text-base font-semibold text-white mb-2">硬體 Auto-tune</h4>
             <p className="text-xs text-slate-400 leading-relaxed mb-3">
-              執行 `python3 server/agent_cli.py doctor` 驗證 Token、音訊與系統相容性。
+              執行 `python3 server/agent_cli.py tune --json`，依架構與記憶體推薦 MLX Whisper / Ollama 模型，預設只預覽不寫入。
             </p>
           </div>
 
@@ -1475,9 +1474,9 @@ export default function NexVoiceShowcase() {
             <div className="w-8 h-8 rounded-lg bg-cyan-500/20 border border-cyan-500/40 text-cyan-300 flex items-center justify-center font-mono font-bold text-sm mb-4">
               03
             </div>
-            <h4 className="text-base font-semibold text-white mb-2">嚴格設定 Schema 驗證</h4>
+            <h4 className="text-base font-semibold text-white mb-2">原子套用與回滾</h4>
             <p className="text-xs text-slate-400 leading-relaxed mb-3">
-              讀取 `config-schema` 並透過 HTTP POST (`/api/settings`) 安全更新本機與雲端模型路由。
+              使用 `tune --apply --config ./config.json` 只更新本地模型欄位，保留 Cloud / Privacy 設定並在失敗時完整回滾。
             </p>
           </div>
         </div>
@@ -1521,6 +1520,10 @@ export default function NexVoiceShowcase() {
             <h4 className="text-sm font-semibold text-white mb-1">Q: 系統硬體需求為何？</h4>
             <p className="text-xs text-slate-400">專為 macOS 14.0 及 Apple Silicon 晶片 (arm64) 打造，本機 MLX 運算需要 Apple Silicon。</p>
           </div>
+          <div className="glass-card p-5 rounded-xl border border-white/10">
+            <h4 className="text-sm font-semibold text-white mb-1">Q: Windows 可以使用嗎？</h4>
+            <p className="text-xs text-slate-400">Windows 程式可以呼叫 Token 驗證的 Gateway API；目前原生 NexVoice HUD App 與 MLX Runtime 仍限定 Apple Silicon macOS，尚未發布 Windows EXE。</p>
+          </div>
         </div>
       </section>
 
@@ -1552,7 +1555,7 @@ export default function NexVoiceShowcase() {
             Releases
           </a>
         </div>
-        <p>NexVoice Open Source · MIT License · Clean Codebase Claims Preserved</p>
+        <p>NexVoice Open Source · MIT License · Local-first by default</p>
       </footer>
     </main>
   );

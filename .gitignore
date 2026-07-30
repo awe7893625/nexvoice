@@ -5,6 +5,7 @@
 *.key
 *.pem
 config.json
+config.json.bak
 gateway.token
 
 # IDE & OS
@@ -47,4 +48,3 @@ website/node_modules/
 
 # Scripts artifacts
 macos/scripts/window-id
-

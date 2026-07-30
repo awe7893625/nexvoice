@@ -1,137 +1,316 @@
-<p align="center">
-  <h1 align="center">NexVoice</h1>
-  <p align="center"><b>macOS 原生本地優先語音輸入與 AI 文本修飾系統</b></p>
-  <p align="center">
-    <a href="https://github.com/awe7893625/nexvoice"><img src="https://img.shields.io/github/stars/awe7893625/nexvoice?style=for-the-badge&logo=github&color=gold" alt="GitHub Stars"></a>
-    <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg?style=for-the-badge" alt="MIT License"></a>
-    <img src="https://img.shields.io/badge/macOS-14.0%2B-black?style=for-the-badge&logo=apple" alt="macOS 14+">
-    <img src="https://img.shields.io/badge/Architecture-Apple%20Silicon-orange?style=for-the-badge" alt="Apple Silicon">
-    <img src="https://img.shields.io/badge/Privacy-Local--First-green?style=for-the-badge" alt="Local First">
-  </p>
-</p>
+<div align="center">
 
-<p align="center">
-  <img src="website/public/og-v2.png" alt="NexVoice Visual Showcase" width="100%">
-</p>
+# NexVoice
 
-<p align="center">
-  <a href="https://github.com/awe7893625/nexvoice"><b>⭐ 為本專案點亮 Star</b></a> •
-  <a href="https://nexvoice-ai.movielin8866.workers.dev"><b>🌐 Live HUD 展示預覽</b></a> •
-  <a href="https://github.com/awe7893625/nexvoice/archive/refs/heads/main.zip"><b>📦 下載原始碼 (.zip)</b></a> •
-  <a href="https://github.com/awe7893625/nexvoice/issues"><b>💬 回報問題 / Issues</b></a> •
-  <a href="https://github.com/awe7893625/nexvoice/releases"><b>🚀 版本發佈 / Releases</b></a>
-</p>
+**Apple Silicon 上的本地優先語音輸入、21 款動態 HUD 與 AI 可配置 Gateway**
 
----
+[![Tests](https://img.shields.io/github/actions/workflow/status/awe7893625/nexvoice/test.yml?branch=main&style=flat-square&label=tests)](../../actions/workflows/test.yml)
+[![Release](https://img.shields.io/github/v/release/awe7893625/nexvoice?style=flat-square)](../../releases/latest)
+[![License](https://img.shields.io/badge/license-MIT-34d399?style=flat-square)](LICENSE)
+[![macOS](https://img.shields.io/badge/macOS-14%2B-111827?style=flat-square&logo=apple)](#平台支援)
+[![Stars](https://img.shields.io/github/stars/awe7893625/nexvoice?style=flat-square)](../../stargazers)
 
-## 🌟 項目簡介與產品亮點 (Product Overview)
+[🌐 互動式產品網站](https://nexvoice-ai.movielin8866.workers.dev) ·
+[⬇️ 下載最新版](../../releases/latest) ·
+[⭐ Star](../../stargazers) ·
+[📖 AI 安裝指南](llms-install.md) ·
+[🧩 Agent Skill](SKILL.md)
 
-NexVoice 是一款專為 **Apple Silicon (macOS 14.0+)** 打造的原生語音聽寫與 AI 增強工具。按下快捷鍵即可啟動錄音，再次按下或放開熱鍵即自動完成語音轉文字（STT）並貼上至當前游標位置。預設採用本地 **MLX Whisper** 引擎，資料完全不離開 Mac，達成零成本、高隱私與極致響應速度。
+</div>
 
-### 🎨 拟真 macOS 錄音 HUD 與視覺風格
+![NexVoice App 與錄音 HUD 互動展示](docs/images/nexvoice-hero-hud.jpg)
 
-- **真實 macOS 錄音 HUD**：流暢無縫的 SwiftUI Canvas / GraphicsContext 視覺渲染，支援單擊開關 (Toggle) 與長按說話 (Push-to-Talk)。
-- **21 種 HUD 渲染器風格 (Renderers)**：包含 *亮條*, *膠囊光暈*, *等離子柱*, *液態脈衝*, *流光絲帶*, *琉璃*, *極光*, *光球*, *虹核*, *赤霞*, *彗尾*, *雙螺旋*, *水銀*, *電漿*, *日蝕*, *煙霧*, *橫煙*, *海浪*, *絲綢氣流*, *極光霧*, *墨滴擴散*。
-- **3 大視覺主題 (Themes)**：純淨 (Pristine)、設計工房 (Studio)、曜石 (Obsidian)。
-- **7 種邊框處理 (Frames)**：無邊框、髮絲細邊、流光邊、呼吸光環、超薄無底、微光流體、浮雕。
+> NexVoice 是獨立的原生 macOS App，不需要和其他聽寫工具綁在一起。
+> 按一下熱鍵開始、再按一下停止，或按住說話、放開完成；文字會貼到目前游標位置。
 
-### ⚡ 熱鍵貼上流 (Hotkey-to-Paste Flow)
+## 為什麼選 NexVoice
 
-- 原生快捷鍵狀態機，確保高頻觸發下的極速響應。
-- 內建防重複貼上 (Duplicate-paste prevention) 機制，確保語音轉寫文字準確無誤地輸入目標應用程式。
+| 能力 | NexVoice |
+|---|---|
+| 語音轉文字 | Apple Silicon 上使用 MLX Whisper，本機優先、預設零 API 費用 |
+| 操作方式 | Toggle 與 Push-to-Talk，原生全域熱鍵與防重複貼上 |
+| 視覺介面 | 21 款 HUD、7 種外框、5 種字幕、3 種 App 主題 |
+| 繁體中文 | 本地標點口令、詞彙偏置、sounds-like 修正與最長詞優先 |
+| AI 整理 | 本機 Ollama；Gemini、Groq、NVIDIA NIM 必須明確啟用 |
+| AI 配置 | 穩定 JSON CLI、硬體診斷、安全 auto-tune、`SKILL.md` |
+| API | Token 驗證的 Loopback REST 與 OpenAI-compatible transcription subset |
+| 隱私 | 音訊預設不離開 Mac；雲端路由需設定、開關與隱私政策同時允許 |
 
-### 🤖 靈活的模型路由 (Model Routing)
+## 21 款 HUD：這就是實際呈現
 
-- **本地優先 (Local-First)**：預設使用 Apple Silicon 專屬 MLX Whisper 進行本地語音轉文字 (STT) 以及本地 Ollama 模型進行文本潤飾。
-- **可選雲端擴充 (Opt-in Cloud)**：Gateway 雲端 STT 支持 Gemini；雲端文本修飾可選擇性接入 Groq, NVIDIA NIM 或 Gemini。App 端亦直接支援 Groq 與 Gemini 整合（Groq 使用 OpenAI 相容 API），且 Gateway 提供 OpenAI 相容的子集 (OpenAI-compatible subset) API 端點 (`/v1/audio/transcriptions`)。
+下列畫面由網站內與 `HUDDesignPack.swift` 對齊的 Canvas renderer 直接執行後擷取，
+不是 AI 生成概念圖；它是 Web 同步 renderer 的展示證據，不冒充原生 App 截圖。
+互動網站可切換錄音狀態、主題、外框、字幕與每一款 HUD。
 
-### 🤖 AI 自動配置 CLI / REST 與安全隱私
+![NexVoice HUD 1 至 8](docs/images/nexvoice-21-hud-gallery.jpg)
 
-- **Agent 友善 CLI & REST**：提供 `python3 server/agent_cli.py doctor` 自動診斷與配置，亦支援 `POST /api/settings` REST 介面。
-- **安全與隱私預設 (Security & Privacy Defaults)**：敏感端點均需驗證 `X-NexVoice-Token` 標頭；絕對無任意遠端指令執行能力，預設嚴格維持資料本地化。
+![NexVoice HUD 9 至 16](docs/images/nexvoice-hud-gallery-09-16.jpg)
 
----
+![NexVoice HUD 17 至 21](docs/images/nexvoice-hud-gallery-17-21.jpg)
 
-## 🚀 快速安裝與啟動 (Quick Install & Gateway)
+<details>
+<summary><b>完整 HUD 名單</b></summary>
 
-### 1. 一鍵安裝腳本
+1. 亮條 Glass Bars
+2. 膠囊光暈 Bloom Pills
+3. 等離子柱 Plasma Columns
+4. 液態脈衝 Liquid Pulse
+5. 流光絲帶 Aura Ribbon
+6. 琉璃 Glass
+7. 極光 Aurora Bars
+8. 光球 Siri Orb
+9. 虹核 Iris Core
+10. 赤霞 Ember Bars
+11. 彗尾 Comet Stream
+12. 雙螺旋 Helix Braid
+13. 水銀 Mercury Band
+14. 電漿 Plasma Arc
+15. 日蝕 Eclipse Corona
+16. 煙霧 Smoke Plume
+17. 橫煙 Horizontal Smoke
+18. 海浪 Ocean Swell
+19. 絲綢氣流 Silk Stream
+20. 極光霧 Aurora Mist
+21. 墨滴擴散 Ink Bloom
+
+</details>
+
+## 平台支援
+
+| 平台 | 狀態 | 說明 |
+|---|---|---|
+| Apple Silicon macOS 14+ | ✅ 主要支援 | 原生 App、HUD、MLX Runtime、Gateway |
+| Intel Mac | ⚠️ 有限 | 可建置部分元件；本機 MLX 不支援 |
+| Windows | 🟡 API Client | 可串接 Gateway REST API；目前沒有 NexVoice 原生 Windows EXE/HUD |
+| Linux | 🟡 API/開發 | 可執行部分 Gateway 測試；沒有原生桌面 App |
+
+我們不會把尚未完成的 Windows App 說成已可下載。Windows 原生客戶端列在
+[ROADMAP.md](ROADMAP.md)；現階段可由 Windows 程式透過安全 API 使用 Mac 上的算力。
+
+## 下載與安裝
+
+### 一般使用者
+
+到 [Releases](../../releases/latest) 下載：
+
+- `NexVoice-<version>-macOS.zip`：解壓後取得 App。
+- `NexVoice-<version>-macOS.dmg`：掛載後拖入 `~/Applications`。
+- `SHA256SUMS`：核對下載檔案完整性。
+
+目前公開社群包為 **ad-hoc 簽章、未 notarize**；第一次開啟可能需要在
+「系統設定 → 隱私權與安全性」確認。正式 Developer ID/notarization 狀態會在每個
+Release 說明中個別標示，不會只靠檔名宣稱。
+
+### 從原始碼一鍵安裝
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/awe7893625/nexvoice/main/install.sh | zsh
 ```
-*(若使用 AI 助手安裝，請參考 [`llms-install.md`](llms-install.md) 了解詳細步驟導引)*
 
-### 2. 啟動 Python Gateway 服務
-
-```bash
-python3 server/app.py
-```
-
----
-
-## 💻 API 使用範例 (API Example)
-
-NexVoice Gateway 提供 OpenAI 相容子集 (OpenAI-compatible subset) 的語音轉寫 API 端點 (`/v1/audio/transcriptions`)：
+或：
 
 ```bash
-curl -X POST http://127.0.0.1:5111/v1/audio/transcriptions \
-  -H "X-NexVoice-Token: YOUR_TOKEN_HERE" \
-  -F "file=@/path/to/audio.wav" \
-  -F "model=mlx-community/whisper-large-v3-turbo"
+git clone https://github.com/awe7893625/nexvoice.git
+cd nexvoice
+zsh install.sh
 ```
 
-詳細介面說明請參閱 [docs/LOCAL_RUNTIME_AND_PROVIDERS.md](docs/LOCAL_RUNTIME_AND_PROVIDERS.md) 與 [docs/PRIVACY.md](docs/PRIVACY.md)。
+安裝完成後，人類使用者必須在 macOS 系統設定授予：
 
----
+1. **Microphone**：錄音。
+2. **Accessibility**：將結果貼入目前游標位置。
 
-## 🏗️ 系統架構摘要 (Architecture Summary)
+AI 不得自動點擊或繞過這兩項 TCC 權限。
+
+## 給 AI：三個指令完成配置
+
+任何支援 shell 的 AI 助手都可以先讀 [`SKILL.md`](SKILL.md) 與
+[`llms-install.md`](llms-install.md)，再依序執行：
+
+```bash
+# 1. 非互動式健檢，不顯示任何金鑰值
+python3 server/agent_cli.py doctor --json
+
+# 2. 根據架構、記憶體與磁碟提出模型建議（dry run）
+python3 server/agent_cli.py tune --json
+
+# 3. 僅原子更新本地模型欄位
+python3 server/agent_cli.py tune --json --apply --config ./config.json
+```
+
+Auto-tune 安全保證：
+
+- 只修改 `local_model` 與 `cleanup_local_model`。
+- 保留 `privacy_mode`、`cloud_enabled`、provider 設定與未知欄位。
+- 拒絕 symlink、非 JSON object 與超大設定檔。
+- 同目錄暫存、`fsync`、原子替換、驗證失敗時位元組完全回滾。
+- Benchmark 只報告真實測量；沒有 WAV、依賴或快取模型就回傳 `NOT_RUN`。
+- 除非明確傳入 `--allow-download`，不會為 benchmark 下載模型。
+
+完整操作與輸出 schema 見 [AI Agent Operations](docs/AI_AGENT_OPERATIONS.md)。
+
+## 本機與雲端算力路由
 
 ```text
-[ macOS App (SwiftUI) ] <--- Global Hotkey & Audio Capture
-       │
-       ├──> Local MLX Whisper Service (:5112) / Ollama
-       │
-       └──> Python Loopback Gateway (:5111)
-                 │
-                 ├──> Local / Cloud STT (Gemini)
-                 └──> Local / Cloud LLM Cleanup (Groq, NIM, Gemini)
+macOS App / Windows API Client / Automation
+                    │
+                    ▼
+       HMAC / Token-authenticated Gateway :5111
+          │                    │
+          │                    └── Opt-in cloud
+          │                        Gemini STT
+          │                        Gemini / Groq / NIM cleanup
+          ▼
+ Authenticated MLX Runtime :5112
+          │
+          ├── Whisper partial model
+          ├── Whisper final model
+          └── Traditional Chinese local post-processing
+
+Optional local cleanup → Ollama :11434
 ```
 
-- **App 層**：Native macOS SwiftUI + Hotkey State Machine + 21 HUD Renderers。
-- **服務層**：經認證的 MLX 輔助進程 (`:5112`) 與本地 Loopback HTTP Gateway (`:5111`)。
-- **測試驗證**：涵蓋 Swift 單元測試、運行時 Contract 測試與 Python Gateway 測試套件 (`pytest server/`)。
+雲端 provider key 存在本身並不會授權傳輸。Gateway 還需要：
 
----
+1. `cloud_enabled=true`
+2. `privacy_mode=false`
+3. 指定 provider 可用
 
-## 🛠️ 建置與測試 (Build & Test)
+任一條件不成立就維持本地路由。詳見
+[Privacy](docs/PRIVACY.md) 與
+[Cloud Providers and Costs](docs/CLOUD_PROVIDERS_AND_COSTS.md)。
+
+## REST / OpenAI-compatible API
+
+Gateway 只監聽 Loopback。原生 App 使用 HMAC-SHA256
+request/response challenge，不會把共享密鑰送給可能搶占連接埠的程序；
+外部 Agent 與 API Client 則使用 `X-NexVoice-Token`。
 
 ```bash
-# 執行 Python Gateway 與 Agent 測試
-pytest server/
+export NEXVOICE_TOKEN="$(cat ~/.cache/nexvoice/gateway.token)"
 
-# 建置 Web Showcase (Cloudflare Worker 兼容) 網站
-npm --prefix website run build
-
-# 建置並測試 macOS SwiftUI 應用程式
-cd macos && swift test
+curl http://127.0.0.1:5111/v1/audio/transcriptions \
+  -H "X-NexVoice-Token: $NEXVOICE_TOKEN" \
+  -F "file=@sample.wav"
 ```
 
----
+回應：
 
-## 🤝 參與貢獻 (Contributing)
+```json
+{
+  "text": "歡迎使用 NexVoice。"
+}
+```
 
-歡迎提交 Issue 或 Pull Request！無論是修復 Bug、優化 HUD 視覺效果，還是增加新的 LLM 潤飾 Provider，都非常感謝社群的參與與貢獻。詳情請閱讀 [CONTRIBUTING.md](CONTRIBUTING.md)。
+其他 Agent 端點：
 
----
+```bash
+curl -H "X-NexVoice-Token: $NEXVOICE_TOKEN" \
+  http://127.0.0.1:5111/api/agent/capabilities
 
-## ⭐ 支持專案 (Star History)
+curl -H "X-NexVoice-Token: $NEXVOICE_TOKEN" \
+  http://127.0.0.1:5111/api/agent/doctor
 
-如果 NexVoice 對您的日常工作或開發有所幫助，請給本專案點亮一顆 **Star** ⭐️，這將是我們持續維護與更新的最大動力！
+curl -H "X-NexVoice-Token: $NEXVOICE_TOKEN" \
+  http://127.0.0.1:5111/api/agent/config-schema
+```
 
-[👉 點擊這裡前往 GitHub 為 NexVoice 點亮 Star](https://github.com/awe7893625/nexvoice)
+NexVoice 沒有提供任意 shell/command execution API。
+API 可切換的本機 STT 模型有明確 allowlist，避免任意模型名稱觸發超大型下載。
+若開發者要加入新模型，需先在程式碼中審核並擴充 allowlist。
 
----
+## 30 秒使用流程
 
-## 📄 開源許可證 (License)
+```mermaid
+flowchart LR
+    A["點一下要輸入文字的位置"] --> B["按一下熱鍵開始<br/>或按住說話"]
+    B --> C["HUD 顯示即時聲量與字幕"]
+    C --> D["再按一下<br/>或放開熱鍵"]
+    D --> E["MLX Whisper 本機轉錄"]
+    E --> F["繁中詞彙與標點處理"]
+    F --> G["只貼上一次到原游標"]
+```
 
-本專案採用 [MIT License](LICENSE) 開源許可證。
+## 常見問題
+
+<details>
+<summary><b>需要訂閱或 API Key 嗎？</b></summary>
+
+不需要。本機 MLX Whisper 是預設路徑。本機文字整理可選 Ollama。雲端 provider
+完全是 opt-in。
+</details>
+
+<details>
+<summary><b>為什麼熱鍵沒有反應？</b></summary>
+
+先執行 `python3 server/agent_cli.py doctor --json`，再確認 Microphone 與
+Accessibility 都授權給實際正在執行的那一份 `NexVoice.app`。不要同時保留
+`/Applications` 與 `~/Applications` 兩份相同 App。
+</details>
+
+<details>
+<summary><b>為什麼重新建置後又要授權？</b></summary>
+
+Ad-hoc signature 每次建置可能改變，macOS 會將它視為不同權限身分。穩定的
+Developer ID 簽章可以避免這個問題。
+</details>
+
+<details>
+<summary><b>Windows 現在能不能用？</b></summary>
+
+能當 API Client 使用，但還沒有原生 Windows HUD App/EXE。請不要下載來路不明、
+聲稱是 NexVoice Windows 版的執行檔。
+</details>
+
+更多案例見 [Troubleshooting](docs/TROUBLESHOOTING.md)。
+
+## 開發與驗證
+
+```bash
+# Python Gateway + Runtime
+python3 -m pytest -q server runtime
+
+# macOS App
+cd macos
+swift test
+NEXVOICE_BUILD_KIND=dev zsh scripts/build-app.sh
+
+# 產品網站
+npm ci --prefix website
+npm --prefix website run lint
+npm --prefix website run build
+```
+
+Repository 內包含：
+
+- Python Gateway/Runtime 測試。
+- Swift hotkey、routing、HUD motion、noise gate、runtime contract 測試。
+- GitHub Actions macOS/Linux CI。
+- Release ZIP/DMG 與 SHA256 產物流程。
+- [`SECURITY.md`](SECURITY.md)、[`CONTRIBUTING.md`](CONTRIBUTING.md)、
+  [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)。
+
+## 專案狀態
+
+- Native macOS App：可建置與測試。
+- Local MLX Runtime：已整合，模型權重依 manifest 安裝，不提交到 Git。
+- Gateway/API：Loopback + Token 驗證。
+- 21 HUD Showcase：可在公開網站互動。
+- Developer ID/notarization：尚未提供公開 receipt。
+- Windows native client：Roadmap。
+
+變更紀錄見 [CHANGELOG.md](CHANGELOG.md)，下一步見 [ROADMAP.md](ROADMAP.md)。
+
+## 參與與支持
+
+歡迎提交 Issue、HUD 設計、provider adapter、文件翻譯或 Pull Request：
+
+- [開 Issue](../../issues/new/choose)
+- [閱讀貢獻指南](CONTRIBUTING.md)
+- [查看安全回報方式](SECURITY.md)
+- [替專案加 Star](../../stargazers)
+
+## 授權
+
+程式碼採用 [MIT License](LICENSE)。第三方套件、模型與資產依各自授權，
+詳見 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) 與 [NOTICE](NOTICE)。
