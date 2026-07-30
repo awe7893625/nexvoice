@@ -59,3 +59,8 @@ python3 server/agent_cli.py setup-local --json
 Windows 程式或自動化工具可呼叫 NexVoice Gateway 的 Token 驗證 REST /
 OpenAI-compatible subset API；目前原生 HUD 桌面 App 與 MLX Whisper Runtime
 仍限定 Apple Silicon macOS。文件或 AI 不得聲稱已提供 Windows 原生 EXE。
+
+原生 macOS App 連線 Gateway 時採 HMAC-SHA256 request/response challenge，
+不會直接傳送共享密鑰；外部 Agent 使用 Token header。透過 API 可選的本機
+STT 模型受 allowlist 限制，新增模型必須先經程式碼審核，不能用任意名稱
+觸發未核准下載。

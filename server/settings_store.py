@@ -25,6 +25,12 @@ _KEYS = {
     "cleanup_local_model",
 }
 
+ALLOWED_LOCAL_STT_MODELS = {
+    "mlx-community/whisper-tiny",
+    "mlx-community/whisper-small",
+    "mlx-community/whisper-large-v3-turbo",
+}
+
 
 @dataclass
 class SettingsView:
@@ -108,7 +114,7 @@ def apply_patch(patch: dict) -> SettingsView:
         "cleanup_enabled": lambda v: isinstance(v, bool) or str(v).lower() in {"0", "1", "true", "false"},
         "privacy_mode": lambda v: isinstance(v, bool) or str(v).lower() in {"0", "1", "true", "false"},
         "cloud_model": _valid_model_str,
-        "local_model": _valid_model_str,
+        "local_model": lambda v: _valid_model_str(v) and v.strip() in ALLOWED_LOCAL_STT_MODELS,
         "cleanup_nim_model": _valid_model_str,
         "cleanup_local_model": _valid_model_str,
     }

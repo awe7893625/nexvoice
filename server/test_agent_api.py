@@ -2,6 +2,9 @@
 test_agent_api.py — Focused tests for agent API, auth, settings validation, privacy enforcement, and payload limits.
 """
 
+import base64
+import hashlib
+import hmac
 import pytest
 from fastapi.testclient import TestClient
 import os
@@ -18,6 +21,15 @@ client = TestClient(gateway_app.app)
 TOKEN = gateway_app.GATEWAY_TOKEN
 
 
+def hmac_headers(method: str, path: str, body: bytes = b"") -> dict[str, str]:
+    nonce = base64.b64encode(os.urandom(18)).decode("ascii")
+    message = f"{method}\n{path}\n{nonce}\n{hashlib.sha256(body).hexdigest()}"
+    proof = base64.b64encode(
+        hmac.new(TOKEN.encode(), message.encode(), hashlib.sha256).digest()
+    ).decode("ascii")
+    return {"X-NexVoice-Nonce": nonce, "X-NexVoice-Proof": proof}
+
+
 @pytest.fixture(autouse=True)
 def init_test_db(tmp_path):
     db_file = str(tmp_path / "test_nexvoice.db")
@@ -30,6 +42,47 @@ def test_unauthorized_access():
     resp = client.get("/api/settings")
     assert resp.status_code == 401
     assert resp.json() == {"detail": "unauthorized"}
+
+
+def test_hmac_auth_proves_gateway_identity_and_rejects_replay():
+    path = "/api/settings"
+    headers = hmac_headers("GET", path)
+    response = client.get(path, headers=headers)
+    assert response.status_code == 200
+
+    response_message = (
+        f"gateway-response\nGET\n{path}\n"
+        f"{headers['X-NexVoice-Nonce']}\n200"
+    )
+    expected = base64.b64encode(
+        hmac.new(TOKEN.encode(), response_message.encode(), hashlib.sha256).digest()
+    ).decode("ascii")
+    assert hmac.compare_digest(
+        response.headers["X-NexVoice-Response-Proof"],
+        expected,
+    )
+
+    replay = client.get(path, headers=headers)
+    assert replay.status_code == 401
+
+    forged = hmac_headers("GET", path)
+    forged["X-NexVoice-Proof"] = base64.b64encode(b"wrong proof").decode()
+    assert client.get(path, headers=forged).status_code == 401
+
+
+def test_hmac_authenticated_settings_write_preserves_request_body():
+    path = "/api/settings"
+    body = b'{"local_model":"mlx-community/whisper-small"}'
+    headers = {
+        **hmac_headers("POST", path, body),
+        "Content-Type": "application/json",
+    }
+
+    response = client.post(path, content=body, headers=headers)
+
+    assert response.status_code == 200
+    assert response.json()["local_model"] == "mlx-community/whisper-small"
+    assert response.headers["X-NexVoice-Response-Proof"]
 
 
 def test_authorized_agent_endpoints():
@@ -46,7 +99,7 @@ def test_authorized_agent_endpoints():
     # doctor
     res = client.get("/api/agent/doctor", headers=headers)
     assert res.status_code == 200
-    assert res.json()["status"] in {"HEALTHY", "DEGRADED", "UNHEALTHY"}
+    assert res.json()["status"] in {"HEALTHY", "DEGRADED", "BLOCKED"}
 
     # config schema
     res = client.get("/api/agent/config-schema", headers=headers)
@@ -104,6 +157,22 @@ def test_invalid_settings_patch():
     # Model name > 200 chars rejected
     res = client.post("/api/settings", json={"cloud_model": "a" * 201}, headers=headers)
     assert res.status_code == 422
+
+    # An authenticated client cannot turn model selection into an arbitrary
+    # Hugging Face download.
+    res = client.post(
+        "/api/settings",
+        json={"local_model": "attacker/huge-unapproved-model"},
+        headers=headers,
+    )
+    assert res.status_code == 422
+
+    res = client.post(
+        "/api/settings",
+        json={"local_model": "mlx-community/whisper-small"},
+        headers=headers,
+    )
+    assert res.status_code == 200
 
 
 def test_privacy_mode_enforcement(monkeypatch):
@@ -215,5 +284,3 @@ def test_ordered_patch_atomic_failure_retains_privacy_mode():
     # Verify DB was NOT updated partially and privacy_mode remains True
     sv_after = settings_store.load()
     assert sv_after.privacy_mode is True
-
-

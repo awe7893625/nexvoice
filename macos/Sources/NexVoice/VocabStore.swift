@@ -31,17 +31,26 @@ enum VocabStore {
         let entries: [VocabEntry]
     }
 
+    private struct AuthorizedRequest {
+        let request: URLRequest
+        let session: URLSession
+        let secret: String
+        let nonce: String
+        let method: String
+        let path: String
+    }
+
     static func load() async -> [VocabEntry] {
         do {
-            var request = URLRequest(url: base.appendingPathComponent("api/vocab"))
-            request.timeoutInterval = 2
-            if let token = GatewayToken.current { request.setValue(token, forHTTPHeaderField: "X-NexVoice-Token") }
-            let configuration = URLSessionConfiguration.ephemeral
-            configuration.timeoutIntervalForRequest = 2
-            configuration.timeoutIntervalForResource = 3
-            let session = URLSession(configuration: configuration)
-            let (data, response) = try await limitedData(for: request, session: session)
+            guard let authorized = authorizedRequest(path: "/api/vocab") else {
+                return loadCached()
+            }
+            let (data, response) = try await limitedData(
+                for: authorized.request,
+                session: authorized.session
+            )
             guard let http = response as? HTTPURLResponse,
+                  verifiedResponse(http, for: authorized),
                   200..<300 ~= http.statusCode,
                   response.expectedContentLength <= Int64(maxPayloadBytes),
                   data.count <= maxPayloadBytes
@@ -76,21 +85,27 @@ enum VocabStore {
     static func add(phrase: String, soundsLike: String) async -> Bool {
         guard let phrase = VocabularyPolicy.normalizedPhrase(phrase) else { return false }
         let soundsLike = VocabularyPolicy.normalizedVariants(soundsLike).joined(separator: ",")
-        var request = URLRequest(url: base.appendingPathComponent("api/vocab"))
-        request.timeoutInterval = 2
-        if let token = GatewayToken.current { request.setValue(token, forHTTPHeaderField: "X-NexVoice-Token") }
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         let body: [String: Any] = [
             "phrase": phrase,
             "sounds_like": soundsLike,
             "enabled": 1
         ]
-        request.httpBody = try? JSONSerialization.data(withJSONObject: body)
+        guard let encoded = try? JSONSerialization.data(withJSONObject: body),
+              let authorized = authorizedRequest(
+                path: "/api/vocab",
+                method: "POST",
+                body: encoded,
+                contentType: "application/json"
+              )
+        else { return false }
         do {
-            let session = boundedSession()
-            let (_, response) = try await limitedData(for: request, session: session)
-            return (response as? HTTPURLResponse).map { 200..<300 ~= $0.statusCode } ?? false
+            let (_, response) = try await limitedData(
+                for: authorized.request,
+                session: authorized.session
+            )
+            return (response as? HTTPURLResponse).map {
+                verifiedResponse($0, for: authorized) && 200..<300 ~= $0.statusCode
+            } ?? false
         } catch {
             return false
         }
@@ -98,17 +113,71 @@ enum VocabStore {
 
     static func delete(id: Int) async -> Bool {
         guard id > 0 else { return false }
-        var request = URLRequest(url: base.appendingPathComponent("api/vocab/\(id)"))
-        request.timeoutInterval = 2
-        if let token = GatewayToken.current { request.setValue(token, forHTTPHeaderField: "X-NexVoice-Token") }
-        request.httpMethod = "DELETE"
+        guard let authorized = authorizedRequest(
+            path: "/api/vocab/\(id)",
+            method: "DELETE"
+        ) else { return false }
         do {
-            let session = boundedSession()
-            let (_, response) = try await limitedData(for: request, session: session)
-            return (response as? HTTPURLResponse).map { 200..<300 ~= $0.statusCode } ?? false
+            let (_, response) = try await limitedData(
+                for: authorized.request,
+                session: authorized.session
+            )
+            return (response as? HTTPURLResponse).map {
+                verifiedResponse($0, for: authorized) && 200..<300 ~= $0.statusCode
+            } ?? false
         } catch {
             return false
         }
+    }
+
+    private static func authorizedRequest(
+        path: String,
+        method: String = "GET",
+        body: Data = Data(),
+        contentType: String? = nil
+    ) -> AuthorizedRequest? {
+        guard let secret = GatewayToken.current else { return nil }
+        let nonce = LocalRuntimeChallenge.nonce()
+        let proof = LocalRuntimeChallenge.requestProof(
+            secret: secret,
+            method: method,
+            path: path,
+            nonce: nonce,
+            body: body
+        )
+        var request = URLRequest(url: base.appendingPathComponent(String(path.dropFirst())))
+        request.timeoutInterval = 2
+        request.httpMethod = method
+        request.httpBody = body.isEmpty ? nil : body
+        request.setValue(nonce, forHTTPHeaderField: "X-NexVoice-Nonce")
+        request.setValue(proof, forHTTPHeaderField: "X-NexVoice-Proof")
+        if let contentType {
+            request.setValue(contentType, forHTTPHeaderField: "Content-Type")
+        }
+        return AuthorizedRequest(
+            request: request,
+            session: boundedSession(),
+            secret: secret,
+            nonce: nonce,
+            method: method,
+            path: path
+        )
+    }
+
+    private static func verifiedResponse(
+        _ response: HTTPURLResponse,
+        for authorized: AuthorizedRequest
+    ) -> Bool {
+        LocalRuntimeChallenge.verify(
+            proofBase64: response.value(forHTTPHeaderField: "X-NexVoice-Response-Proof"),
+            secret: authorized.secret,
+            message: LocalRuntimeChallenge.gatewayResponseMessage(
+                method: authorized.method,
+                path: authorized.path,
+                nonce: authorized.nonce,
+                statusCode: response.statusCode
+            )
+        )
     }
 
     private static var cacheURL: URL {

@@ -136,6 +136,37 @@ final class LocalRuntimeContractTests: XCTestCase {
         )
     }
 
+    func testGatewayResponseProofBindsMethodPathNonceAndStatus() {
+        let secret = "gateway-shared-secret"
+        let nonce = LocalRuntimeChallenge.nonce()
+        let message = LocalRuntimeChallenge.gatewayResponseMessage(
+            method: "GET",
+            path: "/api/vocab",
+            nonce: nonce,
+            statusCode: 200
+        )
+        let proof = signForTest(secret: secret, message: message)
+        XCTAssertTrue(
+            LocalRuntimeChallenge.verify(
+                proofBase64: proof,
+                secret: secret,
+                message: message
+            )
+        )
+        XCTAssertFalse(
+            LocalRuntimeChallenge.verify(
+                proofBase64: proof,
+                secret: secret,
+                message: LocalRuntimeChallenge.gatewayResponseMessage(
+                    method: "GET",
+                    path: "/api/history",
+                    nonce: nonce,
+                    statusCode: 200
+                )
+            )
+        )
+    }
+
     /// Mirrors LocalRuntimeChallenge's private `sign` for test-side "server" simulation.
     private func signForTest(secret: String, message: String) -> String {
         let key = SymmetricKey(data: Data(secret.utf8))

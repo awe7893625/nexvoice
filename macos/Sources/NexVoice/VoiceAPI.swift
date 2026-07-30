@@ -520,6 +520,15 @@ enum LocalRuntimeChallenge {
         "transcribe\n\(nonce)\n\(session)\n\(sequence)\n\(text)"
     }
 
+    static func gatewayResponseMessage(
+        method: String,
+        path: String,
+        nonce: String,
+        statusCode: Int
+    ) -> String {
+        "gateway-response\n\(method)\n\(path)\n\(nonce)\n\(statusCode)"
+    }
+
     private static func sign(secret: String, message: String) -> String {
         let key = SymmetricKey(data: Data(secret.utf8))
         let code = HMAC<SHA256>.authenticationCode(for: Data(message.utf8), using: key)

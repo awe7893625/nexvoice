@@ -20,11 +20,17 @@ Static:
 
 from __future__ import annotations
 
+import base64
+import binascii
+import hashlib
+import hmac
 import json
 import logging
 import os
 import secrets
 import sys
+import threading
+from collections import deque
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
@@ -87,6 +93,55 @@ def _gateway_token() -> str:
     return value
 
 GATEWAY_TOKEN = _gateway_token()
+_AUTH_NONCES: deque[str] = deque()
+_AUTH_NONCE_SET: set[str] = set()
+_AUTH_NONCE_LOCK = threading.Lock()
+_MAX_AUTH_NONCES = 4096
+_MAX_HMAC_BODY_BYTES = 1024 * 1024
+
+
+def _hmac_b64(message: str) -> str:
+    return base64.b64encode(
+        hmac.new(
+            GATEWAY_TOKEN.encode("utf-8"),
+            message.encode("utf-8"),
+            hashlib.sha256,
+        ).digest()
+    ).decode("ascii")
+
+
+def _consume_hmac_nonce(nonce: str) -> bool:
+    try:
+        decoded = base64.b64decode(nonce, validate=True)
+    except (ValueError, binascii.Error):
+        return False
+    if not 16 <= len(decoded) <= 64:
+        return False
+    with _AUTH_NONCE_LOCK:
+        if nonce in _AUTH_NONCE_SET:
+            return False
+        _AUTH_NONCES.append(nonce)
+        _AUTH_NONCE_SET.add(nonce)
+        while len(_AUTH_NONCES) > _MAX_AUTH_NONCES:
+            _AUTH_NONCE_SET.discard(_AUTH_NONCES.popleft())
+    return True
+
+
+def _verify_hmac_request(request, body: bytes) -> str | None:
+    nonce = request.headers.get("X-NexVoice-Nonce", "")
+    supplied = request.headers.get("X-NexVoice-Proof", "")
+    if not nonce or not supplied or len(body) > _MAX_HMAC_BODY_BYTES:
+        return None
+    canonical_path = request.url.path
+    if request.url.query:
+        canonical_path += f"?{request.url.query}"
+    body_hash = hashlib.sha256(body).hexdigest()
+    expected = _hmac_b64(
+        f"{request.method}\n{canonical_path}\n{nonce}\n{body_hash}"
+    )
+    if not secrets.compare_digest(supplied, expected):
+        return None
+    return nonce if _consume_hmac_nonce(nonce) else None
 
 # ---------------------------------------------------------------------------
 # DB + module init (must happen after CONFIG is ready)
@@ -121,8 +176,23 @@ class LocalAuthMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request, call_next):
         if request.url.path not in {"/health", "/", "/docs", "/openapi.json"}:
             supplied = request.headers.get("X-NexVoice-Token", "")
+            authenticated_nonce = None
             if not supplied or not secrets.compare_digest(supplied, GATEWAY_TOKEN):
-                return JSONResponse({"detail": "unauthorized"}, status_code=401)
+                body = await request.body()
+                authenticated_nonce = _verify_hmac_request(request, body)
+                if authenticated_nonce is None:
+                    return JSONResponse({"detail": "unauthorized"}, status_code=401)
+            response = await call_next(request)
+            if authenticated_nonce is not None:
+                canonical_path = request.url.path
+                if request.url.query:
+                    canonical_path += f"?{request.url.query}"
+                message = (
+                    f"gateway-response\n{request.method}\n{canonical_path}\n"
+                    f"{authenticated_nonce}\n{response.status_code}"
+                )
+                response.headers["X-NexVoice-Response-Proof"] = _hmac_b64(message)
+            return response
         return await call_next(request)
 
 app.add_middleware(LocalAuthMiddleware)
@@ -134,7 +204,12 @@ app.add_middleware(
     allow_origins=[],
     allow_credentials=False,
     allow_methods=["GET", "POST", "PUT", "DELETE"],
-    allow_headers=["Content-Type", "X-NexVoice-Token"],
+    allow_headers=[
+        "Content-Type",
+        "X-NexVoice-Token",
+        "X-NexVoice-Nonce",
+        "X-NexVoice-Proof",
+    ],
 )
 
 MAX_AUDIO_BYTES = 32 * 1024 * 1024

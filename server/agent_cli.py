@@ -68,6 +68,7 @@ def get_capabilities() -> dict:
         "security": {
             "auth_required": True,
             "token_header": "X-NexVoice-Token",
+            "native_app_auth": "HMAC-SHA256 request/response challenge",
             "loopback_only": True,
             "shell_execution": False,
         },
@@ -99,7 +100,11 @@ def get_config_schema() -> dict:
             "cleanup_enabled": {"type": "boolean", "default": False},
             "privacy_mode": {"type": "boolean", "default": False},
             "cloud_model": {**model_str_schema, "default": "gemini-2.5-flash"},
-            "local_model": {**model_str_schema, "default": "mlx-community/whisper-large-v3-turbo"},
+            "local_model": {
+                **model_str_schema,
+                "enum": sorted(settings_store.ALLOWED_LOCAL_STT_MODELS),
+                "default": "mlx-community/whisper-large-v3-turbo",
+            },
             "cleanup_style": {
                 "type": "string",
                 "enum": ["verbatim", "tidy", "meeting", "command"],
