@@ -12,6 +12,17 @@ final class TranscriptGuardsTests: XCTestCase {
         )
     }
 
+    func testStrongHallucinationPhraseIsRejectedInTraditionalChineseForm() {
+        // The real pipeline (VoiceRuntimeController) runs simplified-to-
+        // traditional normalization *before* this guard sees the text, so a
+        // strongBadPhrases entry that only lists the simplified form would
+        // never actually match at runtime. Every strong phrase needs both
+        // forms listed (as "谢谢观看"/"謝謝觀看" already did).
+        XCTAssertNil(
+            TranscriptGuards.sanitize("請不吝點讚 訂閱 轉發 打賞支持明鏡與點點欄目")
+        )
+    }
+
     func testDictatedGithubRepoMentionIsAllowed() {
         XCTAssertEqual(
             TranscriptGuards.sanitize("幫我看 github.com/anthropics 這個 repo"),

@@ -10,6 +10,7 @@ enum TranscriptGuards {
     /// coincidental fragment of otherwise-normal long dictation.
     private static let strongBadPhrases: [String] = [
         "请不吝点赞",
+        "請不吝點讚",
         "谢谢观看",
         "謝謝觀看",
         "谢谢收看",
@@ -20,7 +21,9 @@ enum TranscriptGuards {
         "チャンネル登録",
         "字幕由 Amara.org",
         "打赏",
-        "明镜与点点"
+        "打賞",
+        "明镜与点点",
+        "明鏡與點點"
     ]
 
     /// Weak-signal phrases: plausible enough as a coincidental fragment of
