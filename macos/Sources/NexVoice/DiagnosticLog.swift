@@ -32,9 +32,10 @@ enum DiagnosticLog {
     private static let verboseEnabled = ProcessInfo.processInfo.environment["NEXVOICE_VERBOSE_HOTKEY_LOG"] == "1"
 
     static func log(_ message: String) {
-        let stamp = dateFormatter.string(from: Date())
-        let line = "[\(stamp)] \(message)\n"
+        let timestamp = Date()
         queue.async {
+            let stamp = dateFormatter.string(from: timestamp)
+            let line = "[\(stamp)] \(message)\n"
             write(line)
         }
     }
