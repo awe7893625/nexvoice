@@ -288,6 +288,7 @@ def _run_pipeline(
     settings: "settings_store.SettingsView",
     do_cleanup: bool,
     eff_style: str,
+    app_context: Optional[str] = None,
 ) -> tuple[str, str, str, str, str, int]:
     """
     Run transcription (+ optional styled cleanup).
@@ -368,6 +369,7 @@ def _run_pipeline(
             style=eff_style,
             engine=eff_cleanup_engine,
             nim_model=settings.cleanup_nim_model,
+            app_context=app_context,
         )
     else:
         cleaned = raw
@@ -387,6 +389,7 @@ async def api_transcribe(
     cleanup_flag: Optional[str] = Form(None, alias="cleanup"),
     style: Optional[str] = Form(None),
     source: str = Form("pwa"),
+    app_context: Optional[str] = Form(None),
 ) -> JSONResponse:
     """
     Transcribe audio.
@@ -395,6 +398,7 @@ async def api_transcribe(
     cleanup : true | false (overrides server default if provided)
     style   : verbatim | tidy | meeting | command (overrides server default if provided)
     source  : pwa | desktop | test
+    app_context : optional destination app name, forwarded to the cleanup prompt
     """
     audio_bytes = await _read_bounded(audio)
     settings = settings_store.load()
@@ -412,8 +416,10 @@ async def api_transcribe(
     # Resolve effective mode (privacy_mode forces local)
     effective_mode = mode if mode in {"cloud", "local", "auto"} else "auto"
 
+    eff_app_context = app_context.strip() if app_context and app_context.strip() else None
+
     raw, cleaned, text, engine, model_used, duration_ms = _run_pipeline(
-        audio_bytes, effective_mode, settings, do_cleanup, eff_style
+        audio_bytes, effective_mode, settings, do_cleanup, eff_style, app_context=eff_app_context
     )
     ts = _now_iso()
 
@@ -503,6 +509,12 @@ async def api_cleanup(body: dict) -> dict:
     eff_style = (
         req_style if req_style in cleanup.VALID_STYLES else settings.cleanup_style
     )
+    req_app_context = body.get("app_context")
+    eff_app_context = (
+        req_app_context.strip()
+        if isinstance(req_app_context, str) and req_app_context.strip()
+        else None
+    )
     # Privacy mode or cloud disabled is an end-to-end guarantee: never send transcript text to
     # remote cleanup providers, and never use the private Tailscale helper.
     if settings.privacy_mode or not settings.cloud_enabled:
@@ -515,6 +527,7 @@ async def api_cleanup(body: dict) -> dict:
         style=eff_style,
         engine=settings.cleanup_engine,
         nim_model=settings.cleanup_nim_model,
+        app_context=eff_app_context,
     )
     return {"text": cleaned, "style": eff_style}
 

@@ -180,12 +180,13 @@ struct VoiceAPI {
         )
     }
 
-    func clean(_ text: String) async -> String {
-        if let groq = try? await cleanWithGroq(text),
+    func clean(_ text: String, appContext: String? = nil) async -> String {
+        let systemPrompt = Self.systemPrompt(Self.cleanupPrompt, appContext: appContext)
+        if let groq = try? await cleanWithGroq(text, systemPrompt: systemPrompt),
            CleanupFidelityGuard.passes(original: text, candidate: groq, mode: .tidy) {
             return groq
         }
-        if let gemini = try? await cleanWithGemini(text),
+        if let gemini = try? await cleanWithGemini(text, systemPrompt: systemPrompt),
            CleanupFidelityGuard.passes(original: text, candidate: gemini, mode: .tidy) {
             return gemini
         }
@@ -194,18 +195,28 @@ struct VoiceAPI {
 
     /// Long-dictation organizer. Returns nil when no provider produced a usable
     /// result so the caller can fall back to the plain cleanup lane.
-    func organize(_ text: String) async -> String? {
-        if let groq = try? await chatWithGroq(system: Self.organizePrompt, user: text),
+    func organize(_ text: String, appContext: String? = nil) async -> String? {
+        let systemPrompt = Self.systemPrompt(Self.organizePrompt, appContext: appContext)
+        if let groq = try? await chatWithGroq(system: systemPrompt, user: text),
            !groq.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
            CleanupFidelityGuard.passes(original: text, candidate: groq, mode: .organize) {
             return groq
         }
-        if let gemini = try? await chatWithGemini(system: Self.organizePrompt, user: text),
+        if let gemini = try? await chatWithGemini(system: systemPrompt, user: text),
            !gemini.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
            CleanupFidelityGuard.passes(original: text, candidate: gemini, mode: .organize) {
             return gemini
         }
         return nil
+    }
+
+    /// Appends a reference-only line naming the destination app, mirroring
+    /// server/cleanup_v2.py's `app_context` handling exactly so both lanes
+    /// behave the same way. Explicitly "reference only, does not change any
+    /// rule above" so it cannot be used to smuggle in different behavior.
+    private static func systemPrompt(_ base: String, appContext: String?) -> String {
+        guard let appContext, !appContext.isEmpty else { return base }
+        return base + "\n（參考：整理後的文字會貼進「\(appContext)」。這只是語氣與格式的參考，不改變上述任何規則。）"
     }
 
     /// Speak-to-edit: apply spoken instruction to selected text; returns revised text only.
@@ -293,7 +304,7 @@ struct VoiceAPI {
         return text.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    private func cleanWithGroq(_ text: String) async throws -> String {
+    private func cleanWithGroq(_ text: String, systemPrompt: String = Self.cleanupPrompt) async throws -> String {
         guard let key = SecretStore.secret(named: ".groq_key") else {
             throw VoiceAPIError.missingCredential("Groq")
         }
@@ -302,7 +313,7 @@ struct VoiceAPI {
             "temperature": 0.2,
             "reasoning_effort": "none",
             "messages": [
-                ["role": "system", "content": Self.cleanupPrompt],
+                ["role": "system", "content": systemPrompt],
                 ["role": "user", "content": text]
             ]
         ]
@@ -324,13 +335,13 @@ struct VoiceAPI {
         return content.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    private func cleanWithGemini(_ text: String) async throws -> String {
+    private func cleanWithGemini(_ text: String, systemPrompt: String = Self.cleanupPrompt) async throws -> String {
         guard let key = SecretStore.secret(named: ".gemini_key") else {
             throw VoiceAPIError.missingCredential("Gemini")
         }
         let url = URL(string: "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent")!
         let body: [String: Any] = [
-            "system_instruction": ["parts": [["text": Self.cleanupPrompt]]],
+            "system_instruction": ["parts": [["text": systemPrompt]]],
             "contents": [["role": "user", "parts": [["text": text]]]],
             "generationConfig": ["temperature": 0.2, "maxOutputTokens": 1024]
         ]

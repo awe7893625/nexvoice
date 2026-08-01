@@ -559,7 +559,7 @@ final class VoiceRuntimeController {
                 if wantsSmartFormat {
                     hud.showBusy("整理重點中…")
                     state = .cleaning
-                    organized = await api.organize(instruction)
+                    organized = await api.organize(instruction, appContext: targetApplication?.localizedName)
                     if organized == nil {
                         DiagnosticLog.log("smart format unavailable, falling back to cleanup lane")
                     }
@@ -572,7 +572,7 @@ final class VoiceRuntimeController {
                 } else if livePrefs.cleanupEnabled && livePrefs.allowsCloudText {
                     hud.showBusy("整理中…")
                     state = .cleaning
-                    let cleaned = await api.clean(instruction)
+                    let cleaned = await api.clean(instruction, appContext: targetApplication?.localizedName)
                     prepared = await Task.detached(priority: .userInitiated) {
                         LocalTranscriptPostprocessor.process(
                             cleaned,
