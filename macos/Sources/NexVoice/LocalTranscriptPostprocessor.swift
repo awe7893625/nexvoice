@@ -126,17 +126,37 @@ enum LocalTranscriptPostprocessor {
         let sequence: Int
     }
 
-    static func process(_ text: String, vocabulary: [VocabEntry]) -> String {
+    static func process(
+        _ text: String,
+        vocabulary: [VocabEntry],
+        fillerWordCleanupEnabled: Bool = ProductPreferencesStore.load().fillerWordCleanupEnabled,
+        selfCorrectionCleanupEnabled: Bool = ProductPreferencesStore.load().selfCorrectionCleanupEnabled
+    ) -> String {
         let (protectedText, mapping) = protectSpans(in: normalizeScript(text))
-        var result = applyProseCleanup(protectedText, vocabulary: vocabulary)
+        var result = applyProseCleanup(
+            protectedText,
+            vocabulary: vocabulary,
+            fillerWordCleanupEnabled: fillerWordCleanupEnabled,
+            selfCorrectionCleanupEnabled: selfCorrectionCleanupEnabled
+        )
         result = insertClauseSeparators(result)
         result = ensureTerminalPunctuation(result, mapping: mapping)
         return restoreSpans(result, mapping: mapping)
     }
 
-    static func preview(_ text: String, vocabulary: [VocabEntry]) -> String {
+    static func preview(
+        _ text: String,
+        vocabulary: [VocabEntry],
+        fillerWordCleanupEnabled: Bool = ProductPreferencesStore.load().fillerWordCleanupEnabled,
+        selfCorrectionCleanupEnabled: Bool = ProductPreferencesStore.load().selfCorrectionCleanupEnabled
+    ) -> String {
         let (protectedText, mapping) = protectSpans(in: normalizeScript(text))
-        let result = applyProseCleanup(protectedText, vocabulary: vocabulary)
+        let result = applyProseCleanup(
+            protectedText,
+            vocabulary: vocabulary,
+            fillerWordCleanupEnabled: fillerWordCleanupEnabled,
+            selfCorrectionCleanupEnabled: selfCorrectionCleanupEnabled
+        )
         return restoreSpans(result, mapping: mapping)
     }
 
@@ -144,12 +164,119 @@ enum LocalTranscriptPostprocessor {
         TranscriptLanguage.traditionalChinese(text.precomposedStringWithCanonicalMapping)
     }
 
-    private static func applyProseCleanup(_ text: String, vocabulary: [VocabEntry]) -> String {
+    private static func applyProseCleanup(
+        _ text: String,
+        vocabulary: [VocabEntry],
+        fillerWordCleanupEnabled: Bool,
+        selfCorrectionCleanupEnabled: Bool
+    ) -> String {
         var result = applyVocabulary(text, vocabulary: vocabulary)
         result = replaceSpokenPunctuation(result)
         result = demoteClausalDunhao(result)
+        if fillerWordCleanupEnabled {
+            result = foldRepeatedConnectors(result)
+            result = removeBoundaryClauseFillers(result)
+        }
+        if selfCorrectionCleanupEnabled {
+            result = removeSelfCorrections(result)
+        }
         result = normalizePunctuationClusters(result)
         return normalizeWhitespace(result)
+    }
+
+    /// Filler tokens deleted only when they form an entire clause by
+    /// themselves: bounded on the left by punctuation or the start of the
+    /// transcript, and on the right by punctuation, another filler token, or
+    /// the end of the transcript. Never removed mid-clause, and never
+    /// includes 那個/這個/就是 at all -- deleting "那個" out of "那個按鈕"
+    /// would corrupt the sentence, so those three are simply too dangerous to
+    /// ever put in this list (see foldRepeatedConnectors below for the one
+    /// transformation that IS safe for 就是: collapsing an immediate stutter,
+    /// which never deletes the word outright).
+    ///
+    /// The trailing boundary is consumed (not just matched via lookahead) so
+    /// only the *leading* punctuation survives as the clause separator --
+    /// otherwise a filler clause bounded by punctuation on both sides (e.g.
+    /// "我想想，嗯，應該可以") would leave the two flanking marks stranded
+    /// next to each other ("我想想，，應該可以").
+    private static let boundaryClauseFillerPattern =
+        "(?:^|(?<=[，。！？；：、,.!?;:…\\n]))(?:嗯|呃|欸|um|uh)+(?:[，。！？；：、,.!?;:…\\n]|$)"
+
+    private static func removeBoundaryClauseFillers(_ text: String) -> String {
+        guard let regex = RegexCache.shared.regex(
+            for: boundaryClauseFillerPattern, options: [.caseInsensitive]
+        ) else { return text }
+        let source = text as NSString
+        let range = NSRange(location: 0, length: source.length)
+        return regex.stringByReplacingMatches(in: text, options: [], range: range, withTemplate: "")
+    }
+
+    /// Collapses an immediate stutter of a connector word into a single
+    /// instance: "然後然後" -> "然後", "對對對" -> "對", "就是就是" -> "就是".
+    /// This never deletes the word entirely (unlike removeBoundaryClauseFillers
+    /// above), so it stays safe even for 就是, which must never be deleted
+    /// outright.
+    private static let repeatedConnectorPattern = "(然後|對|就是)\\1+"
+
+    private static func foldRepeatedConnectors(_ text: String) -> String {
+        guard let regex = RegexCache.shared.regex(for: repeatedConnectorPattern) else { return text }
+        let source = text as NSString
+        let range = NSRange(location: 0, length: source.length)
+        return regex.stringByReplacingMatches(in: text, options: [], range: range, withTemplate: "$1")
+    }
+
+    /// Explicit self-correction markers. Order does not affect matching
+    /// (each starts with a distinct character), but the longer variant is
+    /// listed first for readability.
+    private static let selfCorrectionMarkers = ["欸不對，", "不對，", "我是說", "應該說"]
+
+    /// For each marker occurrence, if the clause immediately preceding it is
+    /// <=20 characters long, deletes that clause and the marker itself,
+    /// keeping only what comes after the marker -- e.g. "先訂週三，不對，應該
+    /// 訂週四" -> "應該訂週四". A single directly-adjacent boundary
+    /// punctuation mark between the clause and the marker (the "，" in that
+    /// example) is deleted along with them so no dangling leading punctuation
+    /// survives. If the preceding clause is longer than 20 characters, the
+    /// marker is left untouched -- better to miss a correction than to risk
+    /// deleting real content the user didn't intend to retract.
+    private static func removeSelfCorrections(_ text: String) -> String {
+        let markerPattern = selfCorrectionMarkers
+            .map { NSRegularExpression.escapedPattern(for: $0) }
+            .joined(separator: "|")
+        guard let regex = RegexCache.shared.regex(for: markerPattern) else { return text }
+        let boundary = Set("，。！？；：、,.!?;:…\n")
+
+        var working = text
+        var searchFrom = working.startIndex
+        while searchFrom < working.endIndex {
+            let searchRange = NSRange(searchFrom..<working.endIndex, in: working)
+            guard let match = regex.firstMatch(in: working, range: searchRange),
+                  let markerRange = Range(match.range, in: working)
+            else { break }
+
+            var clauseEnd = markerRange.lowerBound
+            if clauseEnd > working.startIndex {
+                let before = working.index(before: clauseEnd)
+                if boundary.contains(working[before]) {
+                    clauseEnd = before
+                }
+            }
+            var clauseStart = clauseEnd
+            while clauseStart > working.startIndex {
+                let before = working.index(before: clauseStart)
+                if boundary.contains(working[before]) { break }
+                clauseStart = before
+            }
+
+            let clauseLength = working.distance(from: clauseStart, to: clauseEnd)
+            if clauseLength <= 20 {
+                working.removeSubrange(clauseStart..<markerRange.upperBound)
+                searchFrom = clauseStart
+            } else {
+                searchFrom = markerRange.upperBound
+            }
+        }
+        return working
     }
 
     /// 頓號 is only correct between short parallel items（「蘋果、香蕉」）。The
