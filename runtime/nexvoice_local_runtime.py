@@ -12,7 +12,9 @@ import hashlib
 import hmac
 import importlib
 import importlib.metadata
+import io
 import json
+import math
 import os
 import re
 import tempfile
@@ -348,6 +350,58 @@ def transcribe_wav(
     return collapse_repetition_loops(text)
 
 
+def _make_warmup_wav() -> bytes:
+    """1s of 16kHz mono audio for model warmup.
+
+    A literal digital-silence WAV would be caught by transcribe_wav's own
+    silence gate (peak < SILENCE_PEAK_THRESHOLD) and returned as "" before
+    ever touching mlx_whisper -- defeating the point of warmup. Use a very
+    quiet, inaudible-in-practice tone instead: loud enough to clear that
+    gate, quiet enough that "silence" is still the right mental model.
+    """
+    sample_rate = 16000
+    duration_seconds = 1.0
+    frequency_hz = 220.0
+    amplitude = int(32767 * 0.08)  # well above SILENCE_PEAK_THRESHOLD (0.03)
+    frame_count = int(sample_rate * duration_seconds)
+    samples = bytearray()
+    for i in range(frame_count):
+        value = int(amplitude * math.sin(2 * math.pi * frequency_hz * i / sample_rate))
+        samples += value.to_bytes(2, byteorder="little", signed=True)
+    buffer = io.BytesIO()
+    with wave.open(buffer, "wb") as wav_file:
+        wav_file.setnchannels(1)
+        wav_file.setsampwidth(2)
+        wav_file.setframerate(sample_rate)
+        wav_file.writeframes(bytes(samples))
+    return buffer.getvalue()
+
+
+def _warm_final_model() -> None:
+    """Best-effort background warmup for the final (large-v3-turbo) model.
+
+    First transcription used to pay mlx_whisper's >10s cold model load on
+    the user's dime. Run one throwaway transcription against a near-silent
+    clip at process start so the model is already resident in
+    `_MODEL_CACHE` by the time a real recording arrives.
+
+    This reuses `transcribe_wav` end to end (same model-selection env vars,
+    same model path, same `_MODEL_LOCK` acquire/release scoped only around
+    the actual inference call) rather than duplicating any of that logic,
+    so it can never hold `_MODEL_LOCK` longer than a normal transcription
+    would, and stays compatible with the partial-request gate (this call
+    uses quality="final", so it never touches `_PARTIAL_GATE` at all).
+    """
+    started = time.monotonic()
+    try:
+        transcribe_wav(_make_warmup_wav(), quality="final")
+    except Exception as exc:  # pragma: no cover - best-effort only, e.g. mlx-whisper missing
+        print(f"warmup: final model failed: {type(exc).__name__}: {exc}", flush=True)
+        return
+    elapsed = time.monotonic() - started
+    print(f"warmup: final model ready in {elapsed:.1f}s", flush=True)
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "NexVoiceLocalRuntime/2"
 
@@ -508,4 +562,5 @@ if __name__ == "__main__":
         Handler,
     )
     threading.Thread(target=watch_parent, args=(httpd,), daemon=True).start()
+    threading.Thread(target=_warm_final_model, daemon=True).start()
     httpd.serve_forever(poll_interval=0.25)
