@@ -295,7 +295,7 @@ final class VoiceRuntimeController {
     private func handle(_ event: NSEvent) {
         guard state != .disabled else { return }
         if event.type == .flagsChanged {
-            DiagnosticLog.log("hotkey flags event keyCode=\(event.keyCode) flags=\(event.modifierFlags.rawValue)")
+            DiagnosticLog.logVerbose("hotkey flags event keyCode=\(event.keyCode) flags=\(event.modifierFlags.rawValue)")
         }
         if event.type == .keyDown {
             if event.keyCode == 53 {
