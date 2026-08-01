@@ -137,6 +137,38 @@ class RuntimeContractTests(unittest.TestCase):
         with patch.object(runtime, "transcribe_wav", boom):
             runtime._warm_final_model()  # must not raise
 
+    def test_warm_partial_model_calls_transcribe_wav_with_partial_quality(self):
+        calls = []
+
+        def fake_transcribe(audio, *, quality="final", vocab_terms=None):
+            calls.append((audio, quality))
+            return "warmup ok"
+
+        with patch.object(runtime, "transcribe_wav", fake_transcribe):
+            runtime._warm_partial_model()
+        self.assertEqual(len(calls), 1)
+        audio, quality = calls[0]
+        self.assertIsInstance(audio, bytes)
+        self.assertEqual(quality, "partial")
+
+    def test_warm_partial_model_swallows_errors_instead_of_raising(self):
+        def boom(audio, *, quality="final", vocab_terms=None):
+            raise RuntimeError("mlx-whisper is not installed")
+
+        with patch.object(runtime, "transcribe_wav", boom):
+            runtime._warm_partial_model()  # must not raise
+
+    def test_warm_models_warms_partial_before_final(self):
+        calls = []
+
+        def fake_transcribe(audio, *, quality="final", vocab_terms=None):
+            calls.append(quality)
+            return "warmup ok"
+
+        with patch.object(runtime, "transcribe_wav", fake_transcribe):
+            runtime._warm_models()
+        self.assertEqual(calls, ["partial", "final"])
+
     def test_health_identity_is_versioned_and_build_is_frozen(self):
         secret = b"test-secret"
         first = runtime.health_payload("nonce-1", secret)

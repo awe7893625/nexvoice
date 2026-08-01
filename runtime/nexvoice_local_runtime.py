@@ -402,6 +402,40 @@ def _warm_final_model() -> None:
     print(f"warmup: final model ready in {elapsed:.1f}s", flush=True)
 
 
+def _warm_partial_model() -> None:
+    """Best-effort background warmup for the partial (tiny) live-caption model.
+
+    Same rationale and same reuse-of-transcribe_wav approach as
+    `_warm_final_model`, but for quality="partial". This one DOES briefly
+    hold `_PARTIAL_GATE` (non-blocking acquire, same as any real partial
+    request) -- if a genuine live-caption request wins the race, this
+    warmup simply raises RuntimeBusy, which is caught below like any other
+    best-effort failure.
+    """
+    started = time.monotonic()
+    try:
+        transcribe_wav(_make_warmup_wav(), quality="partial")
+    except Exception as exc:  # pragma: no cover - best-effort only, e.g. mlx-whisper missing
+        print(f"warmup: partial model failed: {type(exc).__name__}: {exc}", flush=True)
+        return
+    elapsed = time.monotonic() - started
+    print(f"warmup: partial model ready in {elapsed:.1f}s", flush=True)
+
+
+def _warm_models() -> None:
+    """Warm the partial (tiny) model before the final (large) model.
+
+    Live caption calls the partial model on every keystroke while the user
+    is still speaking, so warming it first shrinks the window right after
+    launch during which live captions are empty/slow. The (heavier, less
+    latency-sensitive) final model becomes warm slightly later as a result,
+    which is the right tradeoff since it is only needed once recording
+    stops.
+    """
+    _warm_partial_model()
+    _warm_final_model()
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "NexVoiceLocalRuntime/2"
 
@@ -562,5 +596,5 @@ if __name__ == "__main__":
         Handler,
     )
     threading.Thread(target=watch_parent, args=(httpd,), daemon=True).start()
-    threading.Thread(target=_warm_final_model, daemon=True).start()
+    threading.Thread(target=_warm_models, daemon=True).start()
     httpd.serve_forever(poll_interval=0.25)
