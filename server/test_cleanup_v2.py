@@ -9,6 +9,7 @@ from cleanup_v2 import (
     _lcs_len,
     _cleanup_looks_bad,
     _structure_looks_bad,
+    _minimal_looks_bad,
     cleanup_text,
     STRUCT_MIN_CPS,
 )
@@ -92,6 +93,14 @@ class TestCleanupLooksBad:
         out = "我在想我們是不是要改一下顏色。"
         assert _cleanup_looks_bad("tidy", inp, out) is False
 
+    def test_chinese_tidy_output_collapsed_to_two_chars_is_rejected(self):
+        # Regression test: tidy guard only checked precision (lcs/len(out)),
+        # so an output collapsed to almost nothing was never caught by recall.
+        inp = "我們今天開會討論一下下週的發布計畫然後前端後端都要準備好測試案例喔好"
+        assert len(inp) == 34
+        out = "好的"
+        assert _cleanup_looks_bad("tidy", inp, out) is True
+
 
 class TestStructureLooksBad:
     """Test _structure_looks_bad guard for structure mode."""
@@ -118,6 +127,44 @@ class TestStructureLooksBad:
         inp = "hello world test"
         out = "hello\nworld\ntest"
         assert _structure_looks_bad(inp, out) is False
+
+    def test_chinese_multi_clause_structure_reorder_is_accepted(self):
+        # Regression test: \w{2,} used to match CJK runs as "ASCII words",
+        # causing long Chinese structure-mode output to always be rejected.
+        inp = (
+            "嗯我們今天開會討論一下下週的發布計畫然後第一個是前端的部分"
+            "那個要先確認一下設計稿有沒有定案接下來是後端的部分API的"
+            "文件要補齊然後測試也要一起排進去最後就是行銷那邊要準備好"
+            "文案跟素材大概就是這樣"
+        )
+        out = (
+            "1. 今天開會討論一下下週的發布計畫\n"
+            "2. 前端的部分，要先確認一下設計稿有沒有定案\n"
+            "3. 後端的部分，API 的文件要補齊，測試也要一起排進去\n"
+            "4. 行銷那邊，要準備好文案跟素材"
+        )
+        assert _structure_looks_bad(inp, out) is False
+
+
+class TestMinimalLooksBad:
+    """Test _minimal_looks_bad guard for meeting/command styles."""
+
+    def test_empty_output_is_bad(self):
+        assert _minimal_looks_bad("some input text", "") is True
+
+    def test_overlong_output_is_bad(self):
+        # ratio > 3.0
+        assert _minimal_looks_bad("a", "b" * 10) is True
+
+    def test_reasonable_meeting_notes_are_accepted(self):
+        inp = "我們討論了下週的發布計畫大家都同意先上前端然後後端跟上"
+        out = "決議：\n- 先上前端，後端跟進"
+        assert _minimal_looks_bad(inp, out) is False
+
+    def test_ascii_word_loss_is_bad(self):
+        inp = "please sync with github and slack about the release notes"
+        out = "已同步"
+        assert _minimal_looks_bad(inp, out) is True
 
 
 class TestCleanupTextModes:

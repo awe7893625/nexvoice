@@ -52,27 +52,65 @@ def _lcs_len(a: str, b: str) -> int:
     return prev[-1] if prev else 0
 
 
+# Real ASCII "word" token — Python's \w matches CJK too, which breaks ASCII
+# retention checks on mixed-language text. This pattern is ASCII-only.
+_ASCII_WORD_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]+")
+
+
+def _ascii_words(s: str) -> set[str]:
+    """Extract real ASCII word-like tokens (letters/digits/._- , 2+ chars)."""
+    return set(_ASCII_WORD_RE.findall(s))
+
+
 def _cleanup_looks_bad(style: str, inp: str, out: str) -> bool:
-    """Guard for tidy: reject empty, >3x bloat, <0.70 LCS fidelity."""
+    """Guard for tidy: reject empty, >3x bloat, <0.70 LCS precision, <0.50 CJK/content recall."""
     if style != "tidy":
         return False
     if not out:
         return True
     if len(out) > 3 * len(inp):
         return True
-    return len(out) > 0 and _lcs_len(inp, out) / len(out) < 0.70
+    if len(out) > 0 and _lcs_len(inp, out) / len(out) < 0.70:
+        return True
+    cps_in = _content_cps(inp)
+    if cps_in:
+        cps_out = _content_cps(out)
+        if _lcs_len(cps_in, cps_out) / len(cps_in) < 0.50:
+            return True
+    return False
 
 
 def _structure_looks_bad(inp: str, out: str) -> bool:
-    """Guard for structure: reject empty, ratio 0.25-1.3, ASCII word loss >40%."""
+    """Guard for structure: reject empty, ratio 0.25-1.3, ASCII word loss >40%, or CJK/content recall collapse."""
     if not out:
         return True
     ratio = len(out) / len(inp) if inp else 0
     if ratio < 0.25 or ratio > 1.3:
         return True
-    ascii_in = set(re.findall(r"\w{2,}", inp))
+    ascii_in = _ascii_words(inp)
     if len(ascii_in) >= 3:
-        ascii_out = set(re.findall(r"\w{2,}", out))
+        ascii_out = _ascii_words(out)
+        if ascii_out and len(ascii_out & ascii_in) / len(ascii_in) < 0.6:
+            return True
+    cps_in = _content_cps(inp)
+    if len(cps_in) >= 20:
+        cps_out = _content_cps(out)
+        if _lcs_len(cps_in, cps_out) / len(cps_in) < 0.55:
+            return True
+    return False
+
+
+def _minimal_looks_bad(inp: str, out: str) -> bool:
+    """Minimal guard for meeting/command: reject empty output, wild length ratio,
+    or heavy loss of real ASCII words when the input has enough of them to judge."""
+    if not out:
+        return True
+    ratio = len(out) / len(inp) if inp else 0
+    if ratio < 0.2 or ratio > 3.0:
+        return True
+    ascii_in = _ascii_words(inp)
+    if len(ascii_in) >= 3:
+        ascii_out = _ascii_words(out)
         if ascii_out and len(ascii_out & ascii_in) / len(ascii_in) < 0.6:
             return True
     return False
@@ -266,11 +304,11 @@ def cleanup_text(
     logger.info(f"cleanup mode={'structure' if struct_mode else style}")
 
     def looks_bad(out: str) -> bool:
-        return (
-            _structure_looks_bad(raw, out)
-            if struct_mode
-            else _cleanup_looks_bad(style, raw, out)
-        )
+        if struct_mode:
+            return _structure_looks_bad(raw, out)
+        if style in ("meeting", "command"):
+            return _minimal_looks_bad(raw, out)
+        return _cleanup_looks_bad(style, raw, out)
 
     if engine == "local":
         # Local means offline on this Mac. Never use a hard-coded/private
