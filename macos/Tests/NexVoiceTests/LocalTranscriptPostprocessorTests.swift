@@ -315,4 +315,206 @@ final class LocalTranscriptPostprocessorTests: XCTestCase {
             "NexVoice、NexPilot 都要更新。"
         )
     }
+
+    // MARK: - Filler word / self-correction cleanup (T8)
+
+    func testBoundaryFillerBetweenPunctuationIsRemovedWithoutDoublingPunctuation() {
+        XCTAssertEqual(
+            LocalTranscriptPostprocessor.preview(
+                "我想想，嗯，應該可以", vocabulary: [],
+                fillerWordCleanupEnabled: true, selfCorrectionCleanupEnabled: true
+            ),
+            "我想想，應該可以"
+        )
+    }
+
+    func testLeadingFillerFollowedByPunctuationIsRemoved() {
+        XCTAssertEqual(
+            LocalTranscriptPostprocessor.preview(
+                "嗯，我要出門", vocabulary: [],
+                fillerWordCleanupEnabled: true, selfCorrectionCleanupEnabled: true
+            ),
+            "我要出門"
+        )
+    }
+
+    func testWholeTranscriptThatIsOnlyAFillerBecomesEmpty() {
+        XCTAssertEqual(
+            LocalTranscriptPostprocessor.preview(
+                "嗯", vocabulary: [],
+                fillerWordCleanupEnabled: true, selfCorrectionCleanupEnabled: true
+            ),
+            ""
+        )
+    }
+
+    func testFillerInTheMiddleOfAClauseIsNeverRemoved() {
+        // "嗯嗯好" -- the fillers are followed by "好", not punctuation, another
+        // filler, or end of string, so the whole clause is left untouched:
+        // better to miss a filler than to risk chewing into real content.
+        XCTAssertEqual(
+            LocalTranscriptPostprocessor.preview(
+                "嗯嗯好我知道了", vocabulary: [],
+                fillerWordCleanupEnabled: true, selfCorrectionCleanupEnabled: true
+            ),
+            "嗯嗯好我知道了"
+        )
+    }
+
+    func testRepeatedConnectorWordsAreFoldedNotDeleted() {
+        XCTAssertEqual(
+            LocalTranscriptPostprocessor.preview(
+                "然後然後我們去吃飯", vocabulary: [],
+                fillerWordCleanupEnabled: true, selfCorrectionCleanupEnabled: true
+            ),
+            "然後我們去吃飯"
+        )
+        XCTAssertEqual(
+            LocalTranscriptPostprocessor.preview(
+                "對對對就是這樣", vocabulary: [],
+                fillerWordCleanupEnabled: true, selfCorrectionCleanupEnabled: true
+            ),
+            "對就是這樣"
+        )
+        XCTAssertEqual(
+            LocalTranscriptPostprocessor.preview(
+                "就是就是這個意思", vocabulary: [],
+                fillerWordCleanupEnabled: true, selfCorrectionCleanupEnabled: true
+            ),
+            "就是這個意思"
+        )
+    }
+
+    func testDangerousFillerCandidatesAreNeverTouched() {
+        // 那個/這個/就是 are never in the standalone-deletion list at all --
+        // deleting "那個" out of "那個按鈕" would corrupt the sentence.
+        XCTAssertEqual(
+            LocalTranscriptPostprocessor.preview(
+                "那個按鈕改大一點", vocabulary: [],
+                fillerWordCleanupEnabled: true, selfCorrectionCleanupEnabled: true
+            ),
+            "那個按鈕改大一點"
+        )
+    }
+
+    func testSelfCorrectionMarkerDeletesShortPrecedingClause() {
+        XCTAssertEqual(
+            LocalTranscriptPostprocessor.preview(
+                "先訂週三，不對，應該訂週四", vocabulary: [],
+                fillerWordCleanupEnabled: true, selfCorrectionCleanupEnabled: true
+            ),
+            "應該訂週四"
+        )
+        XCTAssertEqual(
+            LocalTranscriptPostprocessor.preview(
+                "先訂週三，欸不對，應該訂週四", vocabulary: [],
+                fillerWordCleanupEnabled: true, selfCorrectionCleanupEnabled: true
+            ),
+            "應該訂週四"
+        )
+    }
+
+    func testSelfCorrectionMarkerWithoutPrecedingBoundaryDoesNotFire() {
+        // R1 fix: "我是說"/"應該說"/bare "不對，" only trigger deletion when
+        // immediately preceded by a clause boundary (or the start of the
+        // transcript) -- see testSelfCorrectionFalsePositivesArePreservedVerbatim
+        // below for the full regression set. Before the fix this used to
+        // incorrectly delete "我要訂週三" and keep only "週四".
+        XCTAssertEqual(
+            LocalTranscriptPostprocessor.preview(
+                "我要訂週三我是說週四", vocabulary: [],
+                fillerWordCleanupEnabled: true, selfCorrectionCleanupEnabled: true
+            ),
+            "我要訂週三我是說週四"
+        )
+    }
+
+    func testSelfCorrectionFalsePositivesArePreservedVerbatim() {
+        // Regression set for the R1 bug: "我是說"/"應該說" had no boundary
+        // condition at all, and bare "不對，" didn't require a real boundary
+        // to its left either, so all of these used to be misread as
+        // self-corrections and had real content deleted.
+        let negatives = [
+            "這件事我是說真的",
+            "老闆問我是說要不要加班",
+            "整體來看應該說還算成功",
+            "這個數字不對，要重新算一次",
+            "他說的不對，我們用另一個方案",
+            "剛剛那句我是說",
+            "這個不對，",
+        ]
+        for input in negatives {
+            XCTAssertEqual(
+                LocalTranscriptPostprocessor.preview(
+                    input, vocabulary: [],
+                    fillerWordCleanupEnabled: true, selfCorrectionCleanupEnabled: true
+                ),
+                input,
+                "expected '\(input)' to be preserved verbatim"
+            )
+        }
+    }
+
+    func testSelfCorrectionTruePositivesStillFireWithRealBoundary() {
+        // These must still correctly self-correct: the marker is either
+        // preceded by a real clause boundary ("，") or is "欸不對，", which is
+        // exempt from the boundary check (see
+        // boundaryExemptSelfCorrectionMarkers).
+        XCTAssertEqual(
+            LocalTranscriptPostprocessor.preview(
+                "先訂週三，不對，訂週四", vocabulary: [],
+                fillerWordCleanupEnabled: true, selfCorrectionCleanupEnabled: true
+            ),
+            "訂週四"
+        )
+        XCTAssertEqual(
+            LocalTranscriptPostprocessor.preview(
+                "那個欸不對，我要說的是B方案", vocabulary: [],
+                fillerWordCleanupEnabled: true, selfCorrectionCleanupEnabled: true
+            ),
+            "我要說的是B方案"
+        )
+    }
+
+    func testSelfCorrectionMarkerNeverFiresWhenPrecedingClauseIsTooLong() {
+        // The clause before "應該說" here is well over 20 characters, so the
+        // marker must be left untouched rather than risk deleting real content.
+        let input = "這是一個很長很長很長很長很長很長很長很長很長的句子，應該說這句話重點是後面"
+        XCTAssertEqual(
+            LocalTranscriptPostprocessor.preview(
+                input, vocabulary: [],
+                fillerWordCleanupEnabled: true, selfCorrectionCleanupEnabled: true
+            ),
+            input
+        )
+    }
+
+    func testAsymmetricNotConfusedWithSelfCorrectionMarker() {
+        // "不對稱" must not trigger the "不對，" marker -- there is no comma
+        // directly after "不對" here, it is followed by "稱".
+        XCTAssertEqual(
+            LocalTranscriptPostprocessor.preview(
+                "這是不對稱的設計", vocabulary: [],
+                fillerWordCleanupEnabled: true, selfCorrectionCleanupEnabled: true
+            ),
+            "這是不對稱的設計"
+        )
+    }
+
+    func testFillerAndSelfCorrectionCleanupCanBeDisabledIndependently() {
+        XCTAssertEqual(
+            LocalTranscriptPostprocessor.preview(
+                "嗯，我要出門", vocabulary: [],
+                fillerWordCleanupEnabled: false, selfCorrectionCleanupEnabled: true
+            ),
+            "嗯，我要出門"
+        )
+        XCTAssertEqual(
+            LocalTranscriptPostprocessor.preview(
+                "先訂週三，不對，應該訂週四", vocabulary: [],
+                fillerWordCleanupEnabled: true, selfCorrectionCleanupEnabled: false
+            ),
+            "先訂週三，不對，應該訂週四"
+        )
+    }
 }

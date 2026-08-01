@@ -1,9 +1,12 @@
+import array
 import base64
+import io
 import json
 import os
 import sys
 import tempfile
 import unittest
+import wave
 from pathlib import Path
 from unittest.mock import patch
 
@@ -101,6 +104,70 @@ class RuntimeContractTests(unittest.TestCase):
 
     def test_model_cache_contract_is_explicit(self):
         self.assertIsInstance(runtime._MODEL_CACHE, dict)
+
+    def test_warmup_wav_is_valid_16k_mono_and_clears_silence_gate(self):
+        wav_bytes = runtime._make_warmup_wav()
+        with wave.open(io.BytesIO(wav_bytes), "rb") as wav_file:
+            self.assertEqual(wav_file.getnchannels(), 1)
+            self.assertEqual(wav_file.getsampwidth(), 2)
+            self.assertEqual(wav_file.getframerate(), 16000)
+            self.assertEqual(wav_file.getnframes(), 16000)
+            raw = wav_file.readframes(wav_file.getnframes())
+        peak = max(abs(sample) for sample in array.array("h", raw)) / 32768.0
+        self.assertGreater(peak, runtime.SILENCE_PEAK_THRESHOLD)
+
+    def test_warm_final_model_calls_transcribe_wav_with_final_quality(self):
+        calls = []
+
+        def fake_transcribe(audio, *, quality="final", vocab_terms=None):
+            calls.append((audio, quality))
+            return "warmup ok"
+
+        with patch.object(runtime, "transcribe_wav", fake_transcribe):
+            runtime._warm_final_model()
+        self.assertEqual(len(calls), 1)
+        audio, quality = calls[0]
+        self.assertIsInstance(audio, bytes)
+        self.assertEqual(quality, "final")
+
+    def test_warm_final_model_swallows_errors_instead_of_raising(self):
+        def boom(audio, *, quality="final", vocab_terms=None):
+            raise RuntimeError("mlx-whisper is not installed")
+
+        with patch.object(runtime, "transcribe_wav", boom):
+            runtime._warm_final_model()  # must not raise
+
+    def test_warm_partial_model_calls_transcribe_wav_with_partial_quality(self):
+        calls = []
+
+        def fake_transcribe(audio, *, quality="final", vocab_terms=None):
+            calls.append((audio, quality))
+            return "warmup ok"
+
+        with patch.object(runtime, "transcribe_wav", fake_transcribe):
+            runtime._warm_partial_model()
+        self.assertEqual(len(calls), 1)
+        audio, quality = calls[0]
+        self.assertIsInstance(audio, bytes)
+        self.assertEqual(quality, "partial")
+
+    def test_warm_partial_model_swallows_errors_instead_of_raising(self):
+        def boom(audio, *, quality="final", vocab_terms=None):
+            raise RuntimeError("mlx-whisper is not installed")
+
+        with patch.object(runtime, "transcribe_wav", boom):
+            runtime._warm_partial_model()  # must not raise
+
+    def test_warm_models_warms_partial_before_final(self):
+        calls = []
+
+        def fake_transcribe(audio, *, quality="final", vocab_terms=None):
+            calls.append(quality)
+            return "warmup ok"
+
+        with patch.object(runtime, "transcribe_wav", fake_transcribe):
+            runtime._warm_models()
+        self.assertEqual(calls, ["partial", "final"])
 
     def test_health_identity_is_versioned_and_build_is_frozen(self):
         secret = b"test-secret"

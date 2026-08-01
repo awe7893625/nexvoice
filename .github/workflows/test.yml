@@ -21,8 +21,32 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
       - name: Python syntax
         run: python3 -m compileall -q server runtime
-      - name: Runtime contract tests
-        working-directory: runtime
-        run: python3 -m unittest -v test_runtime_contract.py
+      - name: Install server test dependencies
+        run: |
+          # mlx-whisper (and its mlx dependency) only ships wheels for
+          # Apple Silicon macOS, so it cannot be installed on this Linux
+          # runner. Every mlx_whisper import in server/*.py is already
+          # guarded/lazy (see stt_router.py, agent_cli.py, autotune.py),
+          # specifically so most of the server test suite does not need it;
+          # server/conftest.py stubs sys.modules["mlx_whisper"] for the
+          # handful of tests that do exercise that code path. httpx2 is not
+          # in server/requirements.txt (it is only a transitive dependency
+          # of mlx-whisper via huggingface_hub there) but starlette's
+          # TestClient requires it directly, so it is installed explicitly
+          # here for CI.
+          grep -vE '^[[:space:]]*mlx[-_]whisper' server/requirements.txt > /tmp/server-requirements-ci.txt
+          pip install -r /tmp/server-requirements-ci.txt pytest httpx2
+      - name: Server + runtime tests
+        run: |
+          # test_cloud_enabled_default_and_key_not_enough and
+          # test_privacy_mode_enforcement exercise the real local-transcription
+          # code path (stt_router._run_local); server/conftest.py stubs
+          # mlx_whisper when it's missing (this runner) so they run here too,
+          # and use the real package unmodified on local/macOS dev where it's
+          # installed (`pytest -q server runtime` per README).
+          python3 -m pytest -q server runtime
