@@ -14,6 +14,7 @@ from __future__ import annotations
 import base64
 import logging
 import os
+import shutil
 import subprocess
 import tempfile
 import time
@@ -26,7 +27,10 @@ import vocab_store
 
 logger = logging.getLogger(__name__)
 
-FFMPEG = "/opt/homebrew/bin/ffmpeg"
+# Prefer PATH resolution (works on Linux CI, Intel Macs' /usr/local/bin, etc.);
+# fall back to the Apple Silicon Homebrew path this was hardcoded to before,
+# so existing installs with a non-standard PATH keep working.
+FFMPEG = shutil.which("ffmpeg") or "/opt/homebrew/bin/ffmpeg"
 
 # 2026-07-02 從 M5 nexvoice_locald.py 串回：工程雙語常用詞，恆常偏置進
 # whisper 的 initial_prompt（與使用者字典疊加）。中英夾雜的口述裡英文術語
