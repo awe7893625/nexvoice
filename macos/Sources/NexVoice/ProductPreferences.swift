@@ -136,6 +136,8 @@ struct ProductPreferences: Codable, Equatable, Sendable {
     var interactionSounds = true
     var muteOtherAudio = true
     var showDockIcon = true
+    var fillerWordCleanupEnabled = true
+    var selfCorrectionCleanupEnabled = true
     var hudStyle: HUDStyle = .glassBars
     var hudChrome: HUDChrome = .borderless
     var liveCaptionsEnabled = true
@@ -145,6 +147,7 @@ struct ProductPreferences: Codable, Equatable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case dictate, translate, ask, interfaceLanguage, translationTarget
         case interactionSounds, muteOtherAudio, showDockIcon
+        case fillerWordCleanupEnabled, selfCorrectionCleanupEnabled
         case hudStyle, hudChrome, liveCaptionsEnabled, subtitleStyle, appTheme
     }
 
@@ -162,6 +165,8 @@ struct ProductPreferences: Codable, Equatable, Sendable {
         interactionSounds = try values.decodeIfPresent(Bool.self, forKey: .interactionSounds) ?? true
         muteOtherAudio = try values.decodeIfPresent(Bool.self, forKey: .muteOtherAudio) ?? true
         showDockIcon = try values.decodeIfPresent(Bool.self, forKey: .showDockIcon) ?? true
+        fillerWordCleanupEnabled = try values.decodeIfPresent(Bool.self, forKey: .fillerWordCleanupEnabled) ?? true
+        selfCorrectionCleanupEnabled = try values.decodeIfPresent(Bool.self, forKey: .selfCorrectionCleanupEnabled) ?? true
         // Decode as raw String first so a stale rawValue from a retired case
         // (e.g. a HUDStyle that no longer exists) falls back to the default
         // instead of throwing and zeroing out every other preference.

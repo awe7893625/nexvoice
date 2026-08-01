@@ -295,7 +295,7 @@ final class VoiceRuntimeController {
     private func handle(_ event: NSEvent) {
         guard state != .disabled else { return }
         if event.type == .flagsChanged {
-            DiagnosticLog.log("hotkey flags event keyCode=\(event.keyCode) flags=\(event.modifierFlags.rawValue)")
+            DiagnosticLog.logVerbose("hotkey flags event keyCode=\(event.keyCode) flags=\(event.modifierFlags.rawValue)")
         }
         if event.type == .keyDown {
             if event.keyCode == 53 {
@@ -559,7 +559,7 @@ final class VoiceRuntimeController {
                 if wantsSmartFormat {
                     hud.showBusy("整理重點中…")
                     state = .cleaning
-                    organized = await api.organize(instruction)
+                    organized = await api.organize(instruction, appContext: targetApplication?.localizedName)
                     if organized == nil {
                         DiagnosticLog.log("smart format unavailable, falling back to cleanup lane")
                     }
@@ -572,7 +572,7 @@ final class VoiceRuntimeController {
                 } else if livePrefs.cleanupEnabled && livePrefs.allowsCloudText {
                     hud.showBusy("整理中…")
                     state = .cleaning
-                    let cleaned = await api.clean(instruction)
+                    let cleaned = await api.clean(instruction, appContext: targetApplication?.localizedName)
                     prepared = await Task.detached(priority: .userInitiated) {
                         LocalTranscriptPostprocessor.process(
                             cleaned,

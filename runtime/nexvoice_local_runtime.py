@@ -12,7 +12,9 @@ import hashlib
 import hmac
 import importlib
 import importlib.metadata
+import io
 import json
+import math
 import os
 import re
 import tempfile
@@ -348,6 +350,92 @@ def transcribe_wav(
     return collapse_repetition_loops(text)
 
 
+def _make_warmup_wav() -> bytes:
+    """1s of 16kHz mono audio for model warmup.
+
+    A literal digital-silence WAV would be caught by transcribe_wav's own
+    silence gate (peak < SILENCE_PEAK_THRESHOLD) and returned as "" before
+    ever touching mlx_whisper -- defeating the point of warmup. Use a very
+    quiet, inaudible-in-practice tone instead: loud enough to clear that
+    gate, quiet enough that "silence" is still the right mental model.
+    """
+    sample_rate = 16000
+    duration_seconds = 1.0
+    frequency_hz = 220.0
+    amplitude = int(32767 * 0.08)  # well above SILENCE_PEAK_THRESHOLD (0.03)
+    frame_count = int(sample_rate * duration_seconds)
+    samples = bytearray()
+    for i in range(frame_count):
+        value = int(amplitude * math.sin(2 * math.pi * frequency_hz * i / sample_rate))
+        samples += value.to_bytes(2, byteorder="little", signed=True)
+    buffer = io.BytesIO()
+    with wave.open(buffer, "wb") as wav_file:
+        wav_file.setnchannels(1)
+        wav_file.setsampwidth(2)
+        wav_file.setframerate(sample_rate)
+        wav_file.writeframes(bytes(samples))
+    return buffer.getvalue()
+
+
+def _warm_final_model() -> None:
+    """Best-effort background warmup for the final (large-v3-turbo) model.
+
+    First transcription used to pay mlx_whisper's >10s cold model load on
+    the user's dime. Run one throwaway transcription against a near-silent
+    clip at process start so the model is already resident in
+    `_MODEL_CACHE` by the time a real recording arrives.
+
+    This reuses `transcribe_wav` end to end (same model-selection env vars,
+    same model path, same `_MODEL_LOCK` acquire/release scoped only around
+    the actual inference call) rather than duplicating any of that logic,
+    so it can never hold `_MODEL_LOCK` longer than a normal transcription
+    would, and stays compatible with the partial-request gate (this call
+    uses quality="final", so it never touches `_PARTIAL_GATE` at all).
+    """
+    started = time.monotonic()
+    try:
+        transcribe_wav(_make_warmup_wav(), quality="final")
+    except Exception as exc:  # pragma: no cover - best-effort only, e.g. mlx-whisper missing
+        print(f"warmup: final model failed: {type(exc).__name__}: {exc}", flush=True)
+        return
+    elapsed = time.monotonic() - started
+    print(f"warmup: final model ready in {elapsed:.1f}s", flush=True)
+
+
+def _warm_partial_model() -> None:
+    """Best-effort background warmup for the partial (tiny) live-caption model.
+
+    Same rationale and same reuse-of-transcribe_wav approach as
+    `_warm_final_model`, but for quality="partial". This one DOES briefly
+    hold `_PARTIAL_GATE` (non-blocking acquire, same as any real partial
+    request) -- if a genuine live-caption request wins the race, this
+    warmup simply raises RuntimeBusy, which is caught below like any other
+    best-effort failure.
+    """
+    started = time.monotonic()
+    try:
+        transcribe_wav(_make_warmup_wav(), quality="partial")
+    except Exception as exc:  # pragma: no cover - best-effort only, e.g. mlx-whisper missing
+        print(f"warmup: partial model failed: {type(exc).__name__}: {exc}", flush=True)
+        return
+    elapsed = time.monotonic() - started
+    print(f"warmup: partial model ready in {elapsed:.1f}s", flush=True)
+
+
+def _warm_models() -> None:
+    """Warm the partial (tiny) model before the final (large) model.
+
+    Live caption calls the partial model on every keystroke while the user
+    is still speaking, so warming it first shrinks the window right after
+    launch during which live captions are empty/slow. The (heavier, less
+    latency-sensitive) final model becomes warm slightly later as a result,
+    which is the right tradeoff since it is only needed once recording
+    stops.
+    """
+    _warm_partial_model()
+    _warm_final_model()
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "NexVoiceLocalRuntime/2"
 
@@ -508,4 +596,5 @@ if __name__ == "__main__":
         Handler,
     )
     threading.Thread(target=watch_parent, args=(httpd,), daemon=True).start()
+    threading.Thread(target=_warm_models, daemon=True).start()
     httpd.serve_forever(poll_interval=0.25)

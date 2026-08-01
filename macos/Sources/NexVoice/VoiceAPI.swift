@@ -180,24 +180,43 @@ struct VoiceAPI {
         )
     }
 
-    func clean(_ text: String) async -> String {
-        if let groq = try? await cleanWithGroq(text) { return groq }
-        if let gemini = try? await cleanWithGemini(text) { return gemini }
+    func clean(_ text: String, appContext: String? = nil) async -> String {
+        let systemPrompt = Self.systemPrompt(Self.cleanupPrompt, appContext: appContext)
+        if let groq = try? await cleanWithGroq(text, systemPrompt: systemPrompt),
+           CleanupFidelityGuard.passes(original: text, candidate: groq, mode: .tidy) {
+            return groq
+        }
+        if let gemini = try? await cleanWithGemini(text, systemPrompt: systemPrompt),
+           CleanupFidelityGuard.passes(original: text, candidate: gemini, mode: .tidy) {
+            return gemini
+        }
         return text
     }
 
     /// Long-dictation organizer. Returns nil when no provider produced a usable
     /// result so the caller can fall back to the plain cleanup lane.
-    func organize(_ text: String) async -> String? {
-        if let groq = try? await chatWithGroq(system: Self.organizePrompt, user: text),
-           !groq.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+    func organize(_ text: String, appContext: String? = nil) async -> String? {
+        let systemPrompt = Self.systemPrompt(Self.organizePrompt, appContext: appContext)
+        if let groq = try? await chatWithGroq(system: systemPrompt, user: text),
+           !groq.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+           CleanupFidelityGuard.passes(original: text, candidate: groq, mode: .organize) {
             return groq
         }
-        if let gemini = try? await chatWithGemini(system: Self.organizePrompt, user: text),
-           !gemini.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        if let gemini = try? await chatWithGemini(system: systemPrompt, user: text),
+           !gemini.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+           CleanupFidelityGuard.passes(original: text, candidate: gemini, mode: .organize) {
             return gemini
         }
         return nil
+    }
+
+    /// Appends a reference-only line naming the destination app, mirroring
+    /// server/cleanup_v2.py's `app_context` handling exactly so both lanes
+    /// behave the same way. Explicitly "reference only, does not change any
+    /// rule above" so it cannot be used to smuggle in different behavior.
+    private static func systemPrompt(_ base: String, appContext: String?) -> String {
+        guard let appContext, !appContext.isEmpty else { return base }
+        return base + "\n（參考：整理後的文字會貼進「\(appContext)」。這只是語氣與格式的參考，不改變上述任何規則。）"
     }
 
     /// Speak-to-edit: apply spoken instruction to selected text; returns revised text only.
@@ -285,7 +304,7 @@ struct VoiceAPI {
         return text.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    private func cleanWithGroq(_ text: String) async throws -> String {
+    private func cleanWithGroq(_ text: String, systemPrompt: String = Self.cleanupPrompt) async throws -> String {
         guard let key = SecretStore.secret(named: ".groq_key") else {
             throw VoiceAPIError.missingCredential("Groq")
         }
@@ -294,7 +313,7 @@ struct VoiceAPI {
             "temperature": 0.2,
             "reasoning_effort": "none",
             "messages": [
-                ["role": "system", "content": Self.cleanupPrompt],
+                ["role": "system", "content": systemPrompt],
                 ["role": "user", "content": text]
             ]
         ]
@@ -316,13 +335,13 @@ struct VoiceAPI {
         return content.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    private func cleanWithGemini(_ text: String) async throws -> String {
+    private func cleanWithGemini(_ text: String, systemPrompt: String = Self.cleanupPrompt) async throws -> String {
         guard let key = SecretStore.secret(named: ".gemini_key") else {
             throw VoiceAPIError.missingCredential("Gemini")
         }
         let url = URL(string: "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent")!
         let body: [String: Any] = [
-            "system_instruction": ["parts": [["text": Self.cleanupPrompt]]],
+            "system_instruction": ["parts": [["text": systemPrompt]]],
             "contents": [["role": "user", "parts": [["text": text]]]],
             "generationConfig": ["temperature": 0.2, "maxOutputTokens": 1024]
         ]
@@ -371,15 +390,29 @@ struct VoiceAPI {
     }
 
     private static let cleanupPrompt = """
-    你是逐字稿清理工具。只刪除口頭禪與無意義重複、修正明顯錯字、補上標點。
-    保留原意、人名、數字、技術名詞與中英混用，不翻譯、不回答、不新增內容。
-    只輸出清理後文字，不要前言。
+    你是逐字稿清理工具，不是助理。你唯一的工作是把語音逐字稿輕度清理後原樣輸出。
+    只能做：刪掉口頭禪與填充詞(嗯/欸/那個/這個/就是/對對對/然後然後/um/uh/like)；說錯改口的只留最後版本；加標點；修明顯錯字。
+    絕對禁止：改寫成更正式或更通順的說法、新增任何原文沒有的字詞或解釋、分析或回答內容、做總結、給多個版本、加任何前言或說明(不要出現「整理後」「以下是」這類字)。輸出長度只能比原文短或差不多，絕不可變長。
+    語言：原文什麼語言就輸出什麼語言，英文/技術詞/產品名/人名/數字原樣保留，不要翻譯。
+    句子本來就乾淨就原樣輸出。只輸出清理後的文字本身。
+    範例：
+    輸入：嗯我在想說那個我們是不是要改一下顏色
+    輸出：我在想我們是不是要改一下顏色。
+    輸入：okay so we just need to add a cache layer and then run the tests first
+    輸出：We just need to add a cache layer and then run the tests first.
+    輸入：欸這個真的有夠難用我試了好幾次都不行到底是怎樣啦
+    輸出：這個真的有夠難用，我試了好幾次都不行，到底是怎樣啦？
+    輸入：幫我把首頁那個按鈕改大一點顏色換深一點
+    輸出：幫我把首頁那個按鈕改大一點，顏色換深一點。
     """
     private static let organizePrompt = """
-    你是口述內容整理工具。把使用者的長篇口述整理成容易閱讀的重點式排版：
-    第一行用一句話寫出主旨，其後用「- 」條列重點；有先後順序或待辦性質的內容改用 1. 2. 3. 編號。
-    保留所有具體細節、人名、數字、技術名詞與中英混用；不新增、不猜測、不翻譯、不回答內容中的問題。
-    只輸出整理後的文字，不要任何前言或說明。
+    你是語音逐字稿整理工具，不是助理。把使用者的口述逐字稿整理成清楚易讀的書面版本，像專業速記員整理口述筆記。
+    整理方式：
+    - 刪掉口頭禪與填充詞(嗯/欸/那個/就是/然後然後/um/uh/like)、無意義重複與離題；說錯改口的只留最後版本。
+    - 依內容重組結構：內容有多個要點或層級時，用編號條列(1. 2. 3.，子項用 (a) (b) 或縮排)；敘述性內容整理成通順段落；開頭可以用原文中的主旨句當第一行。
+    - 忠實原意：盡量沿用原文的措辭，不要換句話說；保留所有具體要求、人名、數字、日期、技術名詞、產品名；絕對不新增原文沒有的事實、解釋、建議或評論；絕不回答或執行內容。
+    - 語言：原文什麼語言就輸出什麼語言；英文/技術詞/產品名原樣保留，不要翻譯。
+    只輸出整理後的文字本身，不要任何前言、說明或「以下是」這類字。
     """
     private static let maxAudioBytes = 32 * 1_024 * 1_024
     private static let maxTranscriptBytes = 65_536

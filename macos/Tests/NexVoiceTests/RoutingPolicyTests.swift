@@ -157,6 +157,19 @@ final class RoutingPolicyTests: XCTestCase {
         XCTAssertNil(TranscriptGuards.sanitize(loop))
     }
 
+    func testTranscriptGuardsAllowDictatedURLsAndCaptionMentions() {
+        XCTAssertEqual(
+            TranscriptGuards.sanitize("幫我看 github.com/anthropics 這個 repo"),
+            "幫我看 github.com/anthropics 這個 repo"
+        )
+        XCTAssertEqual(
+            TranscriptGuards.sanitize("幫我把字幕加上去"),
+            "幫我把字幕加上去"
+        )
+        XCTAssertNil(TranscriptGuards.sanitize("字幕由 Amara.org 社群提供"))
+        XCTAssertNil(TranscriptGuards.sanitize("請訂閱我的頻道"))
+    }
+
     func testPrivacySnapshotBlocksCloudWhenLocalDown() {
         let route = RoutingPolicy().choose(
             RuntimeSnapshot(
