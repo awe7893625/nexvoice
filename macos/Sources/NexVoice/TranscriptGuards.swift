@@ -2,18 +2,34 @@ import Foundation
 
 /// Drop empty, whisper-hallucinated, or collapsed-loop transcripts before paste.
 enum TranscriptGuards {
-    private static let badPhrases: [String] = [
-        "thank you for watching",
-        "thanks for watching",
-        "字幕由 Amara.org 社群提供",
-        "請訂閱我的頻道",
+    /// Strong-signal hallucination phrases: these never legitimately appear
+    /// in real dictation (sponsor/outro boilerplate Whisper hallucinates on
+    /// silence), so a plain substring match anywhere in the transcript is
+    /// enough to reject it outright -- unlike weakBadPhrases below, this is
+    /// NOT limited to short segments, because these phrases are never a
+    /// coincidental fragment of otherwise-normal long dictation.
+    private static let strongBadPhrases: [String] = [
         "请不吝点赞",
         "谢谢观看",
         "謝謝觀看",
         "谢谢收看",
         "謝謝收看",
+        "thank you for watching",
+        "thanks for watching",
         "ご視聴",
         "チャンネル登録",
+        "字幕由 Amara.org",
+        "打赏",
+        "明镜与点点"
+    ]
+
+    /// Weak-signal phrases: plausible enough as a coincidental fragment of
+    /// real dictation (e.g. "字幕" is a normal word to dictate on its own)
+    /// that they only reject a segment via the short-segment (<30
+    /// normalized chars) coverage heuristic in looksLikeKnownHallucination,
+    /// never as a bare substring match.
+    private static let weakBadPhrases: [String] = [
+        "請訂閱我的頻道",
         "mr mr",
         "【音乐】",
         "[music]",
@@ -43,7 +59,22 @@ enum TranscriptGuards {
         return String(scalars).lowercased()
     }
 
-    /// A whole segment "looks like" a known hallucinated phrase when either:
+    /// A transcript containing a strong-signal phrase as a plain substring
+    /// (after the same normalization used elsewhere in this file) is always
+    /// rejected, regardless of the transcript's overall length.
+    private static func containsStrongHallucination(_ text: String) -> Bool {
+        let normalizedText = normalizedForHallucinationMatch(text)
+        guard !normalizedText.isEmpty else { return false }
+        for phrase in strongBadPhrases {
+            let normalizedPhrase = normalizedForHallucinationMatch(phrase)
+            guard !normalizedPhrase.isEmpty else { continue }
+            if normalizedText.contains(normalizedPhrase) { return true }
+        }
+        return false
+    }
+
+    /// A whole segment "looks like" a known (weak-signal) hallucinated
+    /// phrase when either:
     /// - the segment is a short truncated fragment of a longer known phrase
     ///   (segment is a substring of the phrase, covering >80% of it), or
     /// - the segment is mostly made up of one or more repetitions of a known
@@ -54,7 +85,7 @@ enum TranscriptGuards {
     private static func looksLikeKnownHallucination(_ text: String) -> Bool {
         let normalizedText = normalizedForHallucinationMatch(text)
         guard !normalizedText.isEmpty, normalizedText.count < 30 else { return false }
-        for phrase in badPhrases {
+        for phrase in weakBadPhrases {
             let normalizedPhrase = normalizedForHallucinationMatch(phrase)
             guard !normalizedPhrase.isEmpty else { continue }
             if normalizedText.count <= normalizedPhrase.count {
@@ -83,6 +114,7 @@ enum TranscriptGuards {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed.isEmpty { return true }
 
+        if containsStrongHallucination(trimmed) { return true }
         if looksLikeKnownHallucination(trimmed) { return true }
 
         var total = 0
