@@ -75,6 +75,11 @@ def _cleanup_looks_bad(style: str, inp: str, out: str) -> bool:
     cps_in = _content_cps(inp)
     if cps_in:
         cps_out = _content_cps(out)
+        # LCS is O(n*m); skip it for very long transcripts (ratio + raw-LCS
+        # checks above already give a reasonable fidelity signal) rather
+        # than stall the caller.
+        if len(cps_in) > 6000 or len(cps_out) > 6000:
+            return False
         if _lcs_len(cps_in, cps_out) / len(cps_in) < 0.50:
             return True
     return False
@@ -95,6 +100,11 @@ def _structure_looks_bad(inp: str, out: str) -> bool:
     cps_in = _content_cps(inp)
     if len(cps_in) >= 20:
         cps_out = _content_cps(out)
+        # LCS is O(n*m); skip it for very long transcripts (ratio + ASCII
+        # word-retention checks above already give a reasonable fidelity
+        # signal) rather than stall the caller.
+        if len(cps_in) > 6000 or len(cps_out) > 6000:
+            return False
         if _lcs_len(cps_in, cps_out) / len(cps_in) < 0.55:
             return True
     return False
@@ -106,7 +116,7 @@ def _minimal_looks_bad(inp: str, out: str) -> bool:
     if not out:
         return True
     ratio = len(out) / len(inp) if inp else 0
-    if ratio < 0.2 or ratio > 3.0:
+    if ratio < 0.08 or ratio > 3.0:
         return True
     ascii_in = _ascii_words(inp)
     if len(ascii_in) >= 3:

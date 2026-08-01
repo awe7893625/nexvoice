@@ -166,6 +166,46 @@ class TestMinimalLooksBad:
         out = "已同步"
         assert _minimal_looks_bad(inp, out) is True
 
+    def test_ratio_between_old_and_new_floor_now_accepted(self):
+        # ratio = 0.1: rejected under the old 0.2 floor, accepted under the
+        # new 0.08 floor -- a "command" rewrite is *supposed* to compress a
+        # long dictation down into one short imperative sentence.
+        inp = "a" * 20
+        out = "a" * 2
+        assert _minimal_looks_bad(inp, out) is False
+
+    def test_ratio_below_new_floor_still_bad(self):
+        # ratio = 0.01, still well under even the relaxed 0.08 floor.
+        inp = "a" * 100
+        out = "a"
+        assert _minimal_looks_bad(inp, out) is True
+
+
+class TestLongContentSkipsExpensiveLcs:
+    """R4: the content-cps LCS check is skipped when either side exceeds
+    6000 codepoints, so a pathologically long transcript can't stall the
+    guard. Both fixtures below share a long non-content (". ") prefix so the
+    cheaper checks ahead of the content-cps section (raw-length ratio,
+    raw-string LCS precision, ASCII word retention) all pass first --
+    isolating the content-cps skip itself. Without the skip, both would be
+    rejected: LCS(6001 "中"s, [3000 "中"s + 3001 "文"s]) = 3000, giving a
+    recall of ~0.4999 (tidy needs >=0.50, structure needs >=0.55)."""
+
+    def _long_fixture(self):
+        inp = ". " * 3000 + "中" * 6001
+        out = ". " * 3000 + "中" * 3000 + "文" * 3001
+        return inp, out
+
+    def test_cleanup_looks_bad_skips_lcs_for_long_content(self):
+        inp, out = self._long_fixture()
+        assert len(_content_cps(inp)) == 6001
+        assert _cleanup_looks_bad("tidy", inp, out) is False
+
+    def test_structure_looks_bad_skips_lcs_for_long_content(self):
+        inp, out = self._long_fixture()
+        assert len(_content_cps(inp)) == 6001
+        assert _structure_looks_bad(inp, out) is False
+
 
 class TestCleanupTextModes:
     """Test cleanup_text style and mode selection."""
