@@ -178,10 +178,60 @@ enum LocalTranscriptPostprocessor {
             result = removeBoundaryClauseFillers(result)
         }
         if selfCorrectionCleanupEnabled {
-            result = removeSelfCorrections(result)
+            result = applySelfCorrectionsWithFidelityBackstop(result)
         }
         result = normalizePunctuationClusters(result)
         return normalizeWhitespace(result)
+    }
+
+    /// Runs `removeSelfCorrections`, then falls back to the pre-correction
+    /// text if the result looks like real content was chewed away rather
+    /// than a genuine self-correction. This is a local backstop for the
+    /// boundary heuristic in `removeSelfCorrections` itself -- defense in
+    /// depth, not the primary fix.
+    ///
+    /// Scoped to *only* this step, not filler cleanup: filler removal is
+    /// already narrowly bounded (`removeBoundaryClauseFillers` only deletes
+    /// a span bounded by punctuation/string edges on both sides) and is
+    /// allowed to legitimately empty a transcript that is nothing but filler
+    /// (see `testWholeTranscriptThatIsOnlyAFillerBecomesEmpty` in
+    /// LocalTranscriptPostprocessorTests.swift) -- gating filler here too
+    /// would reject correct behaviour, not just bugs.
+    ///
+    /// The content-ratio floor is intentionally far below a naive 60%: a
+    /// real self-correction is *expected* to delete most of a short
+    /// preceding clause on purpose -- "先訂週三，不對，訂週四" keeps only 3 of
+    /// the original 9 content characters (33%); "那個欸不對，我要說的是B方案"
+    /// keeps 7 of 12 (58%) -- so a 60% floor would reject those legitimate
+    /// corrections along with real bugs. 25% still catches a transcript
+    /// reduced to near-nothing while leaving every known-good correction
+    /// well clear.
+    private static func applySelfCorrectionsWithFidelityBackstop(_ text: String) -> String {
+        let corrected = removeSelfCorrections(text)
+        let trimmedCorrected = corrected.trimmingCharacters(in: .whitespacesAndNewlines)
+        let inputContentCount = contentCharacterCount(text)
+        guard inputContentCount > 0 else { return corrected }
+        if trimmedCorrected.isEmpty { return text }
+        let correctedContentCount = contentCharacterCount(trimmedCorrected)
+        if Double(correctedContentCount) < Double(inputContentCount) * 0.25 {
+            return text
+        }
+        return corrected
+    }
+
+    /// Content characters for the fidelity backstop above: ASCII lowercase
+    /// a-z, digits 0-9, and CJK 0x4E00-0x9FFF -- mirrors
+    /// CleanupFidelityGuard's `contentChars` (and server/cleanup_v2.py's
+    /// `_content_cps`) exactly, including the deliberate quirk of only
+    /// counting lowercase ASCII letters.
+    private static func contentCharacterCount(_ text: String) -> Int {
+        text.unicodeScalars.reduce(into: 0) { count, scalar in
+            let value = scalar.value
+            if (0x61...0x7A).contains(value) || (0x30...0x39).contains(value)
+                || (0x4E00...0x9FFF).contains(value) {
+                count += 1
+            }
+        }
     }
 
     /// Filler tokens deleted only when they form an entire clause by
@@ -230,6 +280,18 @@ enum LocalTranscriptPostprocessor {
     /// listed first for readability.
     private static let selfCorrectionMarkers = ["欸不對，", "不對，", "我是說", "應該說"]
 
+    /// Markers in this set fire regardless of what precedes them: "欸不對，"
+    /// already contains an explicit hesitation particle ("欸") as part of the
+    /// literal match, which is itself strong, unambiguous evidence of an
+    /// in-progress self-correction (e.g. "那個欸不對，我要說的是B方案").
+    /// The other three markers have no such built-in signal and can appear
+    /// inside ordinary, non-corrective clauses -- "這件事我是說真的" (as in "I
+    /// mean it"), "這個數字不對，要重新算一次" ("不對" as a plain adjective,
+    /// not a discourse marker) -- so they are gated by
+    /// `precededByClauseBoundary` below and only fire right after a clause
+    /// boundary or at the very start of the transcript.
+    private static let boundaryExemptSelfCorrectionMarkers: Set<String> = ["欸不對，"]
+
     /// For each marker occurrence, if the clause immediately preceding it is
     /// <=20 characters long, deletes that clause and the marker itself,
     /// keeping only what comes after the marker -- e.g. "先訂週三，不對，應該
@@ -253,6 +315,21 @@ enum LocalTranscriptPostprocessor {
             guard let match = regex.firstMatch(in: working, range: searchRange),
                   let markerRange = Range(match.range, in: working)
             else { break }
+
+            let matchedMarker = String(working[markerRange])
+            if !boundaryExemptSelfCorrectionMarkers.contains(matchedMarker) {
+                let precededByClauseBoundary: Bool
+                if markerRange.lowerBound == working.startIndex {
+                    precededByClauseBoundary = true
+                } else {
+                    let charBeforeMarker = working.index(before: markerRange.lowerBound)
+                    precededByClauseBoundary = boundary.contains(working[charBeforeMarker])
+                }
+                guard precededByClauseBoundary else {
+                    searchFrom = markerRange.upperBound
+                    continue
+                }
+            }
 
             var clauseEnd = markerRange.lowerBound
             if clauseEnd > working.startIndex {

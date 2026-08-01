@@ -414,13 +414,65 @@ final class LocalTranscriptPostprocessorTests: XCTestCase {
         )
     }
 
-    func testSelfCorrectionMarkerWithoutPrecedingPunctuationStillWorks() {
+    func testSelfCorrectionMarkerWithoutPrecedingBoundaryDoesNotFire() {
+        // R1 fix: "我是說"/"應該說"/bare "不對，" only trigger deletion when
+        // immediately preceded by a clause boundary (or the start of the
+        // transcript) -- see testSelfCorrectionFalsePositivesArePreservedVerbatim
+        // below for the full regression set. Before the fix this used to
+        // incorrectly delete "我要訂週三" and keep only "週四".
         XCTAssertEqual(
             LocalTranscriptPostprocessor.preview(
                 "我要訂週三我是說週四", vocabulary: [],
                 fillerWordCleanupEnabled: true, selfCorrectionCleanupEnabled: true
             ),
-            "週四"
+            "我要訂週三我是說週四"
+        )
+    }
+
+    func testSelfCorrectionFalsePositivesArePreservedVerbatim() {
+        // Regression set for the R1 bug: "我是說"/"應該說" had no boundary
+        // condition at all, and bare "不對，" didn't require a real boundary
+        // to its left either, so all of these used to be misread as
+        // self-corrections and had real content deleted.
+        let negatives = [
+            "這件事我是說真的",
+            "老闆問我是說要不要加班",
+            "整體來看應該說還算成功",
+            "這個數字不對，要重新算一次",
+            "他說的不對，我們用另一個方案",
+            "剛剛那句我是說",
+            "這個不對，",
+        ]
+        for input in negatives {
+            XCTAssertEqual(
+                LocalTranscriptPostprocessor.preview(
+                    input, vocabulary: [],
+                    fillerWordCleanupEnabled: true, selfCorrectionCleanupEnabled: true
+                ),
+                input,
+                "expected '\(input)' to be preserved verbatim"
+            )
+        }
+    }
+
+    func testSelfCorrectionTruePositivesStillFireWithRealBoundary() {
+        // These must still correctly self-correct: the marker is either
+        // preceded by a real clause boundary ("，") or is "欸不對，", which is
+        // exempt from the boundary check (see
+        // boundaryExemptSelfCorrectionMarkers).
+        XCTAssertEqual(
+            LocalTranscriptPostprocessor.preview(
+                "先訂週三，不對，訂週四", vocabulary: [],
+                fillerWordCleanupEnabled: true, selfCorrectionCleanupEnabled: true
+            ),
+            "訂週四"
+        )
+        XCTAssertEqual(
+            LocalTranscriptPostprocessor.preview(
+                "那個欸不對，我要說的是B方案", vocabulary: [],
+                fillerWordCleanupEnabled: true, selfCorrectionCleanupEnabled: true
+            ),
+            "我要說的是B方案"
         )
     }
 
