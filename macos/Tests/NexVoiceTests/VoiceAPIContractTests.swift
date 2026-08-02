@@ -75,4 +75,76 @@ final class VoiceAPIContractTests: XCTestCase {
         let object = VoiceAPI.localGatewayRequestObject(text: "test", appContext: "")
         XCTAssertNil(object["app_context"])
     }
+
+    // MARK: - Local-gateway length gate
+    //
+    // Mirrors server/cleanup_v2.py's STRUCT_MIN_CPS = 80: above this many
+    // content characters the server silently switches a "tidy" request into
+    // struct_mode (numbered-bullet output), which the cloud-cleaned
+    // postprocessing path would corrupt. The client must skip the
+    // local-gateway tier entirely once content reaches that threshold.
+
+    func testIsEligibleForLocalGatewayFallbackAcceptsShortContent() {
+        // 79 CJK content characters -- one under the 80 threshold.
+        let text = String(repeating: "字", count: 79)
+        XCTAssertTrue(VoiceAPI.isEligibleForLocalGatewayFallback(text))
+    }
+
+    func testIsEligibleForLocalGatewayFallbackRejectsAtThreshold() {
+        // Exactly 80 content characters must already be excluded -- the
+        // server's own gate is ">= STRUCT_MIN_CPS", not "> STRUCT_MIN_CPS".
+        let text = String(repeating: "字", count: 80)
+        XCTAssertFalse(VoiceAPI.isEligibleForLocalGatewayFallback(text))
+    }
+
+    func testIsEligibleForLocalGatewayFallbackRejectsLongContent() {
+        let text = String(repeating: "字", count: 200)
+        XCTAssertFalse(VoiceAPI.isEligibleForLocalGatewayFallback(text))
+    }
+
+    func testIsEligibleForLocalGatewayFallbackIgnoresNonContentCharactersWhenCounting() {
+        // Punctuation/whitespace/uppercase ASCII are not "content" per
+        // CleanupFidelityGuard.contentChars (mirrors Python's _content_cps),
+        // so padding a short transcript with them must not push it over the
+        // threshold.
+        let text = String(repeating: "字", count: 79) + String(repeating: "， ！？ABC", count: 20)
+        XCTAssertTrue(VoiceAPI.isEligibleForLocalGatewayFallback(text))
+    }
+
+    // MARK: - Local-gateway response parsing
+
+    func testParseLocalGatewayResponseExtractsAndTrimsText() throws {
+        let data = try JSONSerialization.data(withJSONObject: ["text": "  已整理好的文字  "])
+        XCTAssertEqual(try VoiceAPI.parseLocalGatewayResponse(data), "已整理好的文字")
+    }
+
+    func testParseLocalGatewayResponseThrowsWhenTextKeyMissing() {
+        let data = try! JSONSerialization.data(withJSONObject: ["status": "ok"])
+        XCTAssertThrowsError(try VoiceAPI.parseLocalGatewayResponse(data)) { error in
+            guard case VoiceAPIError.invalidResponse = error else {
+                return XCTFail("expected .invalidResponse, got \(error)")
+            }
+        }
+    }
+
+    func testParseLocalGatewayResponseThrowsWhenTextIsEmptyAfterTrim() {
+        let data = try! JSONSerialization.data(withJSONObject: ["text": "   \n  "])
+        XCTAssertThrowsError(try VoiceAPI.parseLocalGatewayResponse(data)) { error in
+            guard case VoiceAPIError.invalidResponse = error else {
+                return XCTFail("expected .invalidResponse, got \(error)")
+            }
+        }
+    }
+
+    func testParseLocalGatewayResponseThrowsWhenTextExceedsMaxTranscriptBytes() {
+        // maxTranscriptBytes is 65_536 in VoiceAPI.swift; one byte over must
+        // be rejected, mirroring every other cleanup lane's byte-cap check.
+        let oversized = String(repeating: "a", count: 65_537)
+        let data = try! JSONSerialization.data(withJSONObject: ["text": oversized])
+        XCTAssertThrowsError(try VoiceAPI.parseLocalGatewayResponse(data)) { error in
+            guard case VoiceAPIError.invalidResponse = error else {
+                return XCTFail("expected .invalidResponse, got \(error)")
+            }
+        }
+    }
 }
