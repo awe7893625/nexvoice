@@ -501,6 +501,39 @@ final class LocalTranscriptPostprocessorTests: XCTestCase {
         )
     }
 
+    // MARK: - Additional postprocessor fixture coverage
+    //
+    // These two cases reuse the same fixture strings as
+    // testSpokenPunctuationAndTraditionalChinese / the filler+self-correction
+    // tests above, calling LocalTranscriptPostprocessor directly. They are
+    // NOT a regression test for VoiceRuntimeController's raw-fallback branch
+    // wiring (whether that branch actually invokes the postprocessor) --
+    // proven by reverting VoiceRuntimeController.swift to its pre-fix state
+    // while keeping these tests: they still pass, because they never touch
+    // VoiceRuntimeController at all. VoiceRuntimeController's own branching
+    // isn't directly unit-testable (it's wired into an async hotkey state
+    // machine); these are honestly just more postprocessor fixture tests.
+
+    func testPostprocessorAppliesSpokenPunctuationAndTraditionalChineseToRawFallbackFixture() {
+        XCTAssertEqual(
+            LocalTranscriptPostprocessor.process(
+                "今天开会逗号明天再做句号",
+                vocabulary: []
+            ),
+            "今天開會，明天再做。"
+        )
+    }
+
+    func testPostprocessorAppliesFillerAndSelfCorrectionCleanupToRawFallbackFixture() {
+        XCTAssertEqual(
+            LocalTranscriptPostprocessor.preview(
+                "先訂週三，不對，應該訂週四", vocabulary: [],
+                fillerWordCleanupEnabled: true, selfCorrectionCleanupEnabled: true
+            ),
+            "應該訂週四"
+        )
+    }
+
     func testFillerAndSelfCorrectionCleanupCanBeDisabledIndependently() {
         XCTAssertEqual(
             LocalTranscriptPostprocessor.preview(

@@ -34,6 +34,11 @@ struct VoiceAPI {
     /// session with generous ceilings; per-request timeouts stay scaled to
     /// audio length in transcribeLocal/transcribeGroq.
     private let transcribeSession: URLSession
+    /// Local-gateway cleanup fallback (server/app.py's /api/cleanup running its
+    /// own local Ollama engine) is the third tier after Groq/Gemini fail or hit
+    /// quota. Measured ~9s on this hardware, well past the 8s default session
+    /// timeout, so it gets its own generous-timeout session.
+    private let localGatewaySession: URLSession
 
     init() {
         let configuration = URLSessionConfiguration.ephemeral
@@ -46,6 +51,11 @@ struct VoiceAPI {
         transcribeConfiguration.timeoutIntervalForRequest = 120
         transcribeConfiguration.timeoutIntervalForResource = 300
         transcribeSession = URLSession(configuration: transcribeConfiguration)
+        let localGatewayConfiguration = URLSessionConfiguration.ephemeral
+        localGatewayConfiguration.requestCachePolicy = .reloadIgnoringLocalCacheData
+        localGatewayConfiguration.timeoutIntervalForRequest = 20
+        localGatewayConfiguration.timeoutIntervalForResource = 25
+        localGatewaySession = URLSession(configuration: localGatewayConfiguration)
     }
 
     /// Base 20s covers model warm-up and dispatch; add real-time-factor
@@ -190,7 +200,24 @@ struct VoiceAPI {
            CleanupFidelityGuard.passes(original: text, candidate: gemini, mode: .tidy) {
             return gemini
         }
+        if let local = try? await cleanWithLocalGateway(text, appContext: appContext),
+           CleanupFidelityGuard.passes(original: text, candidate: local, mode: .tidy) {
+            return local
+        }
         return text
+    }
+
+    /// Whether `text` is short enough for the local-gateway cleanup fallback
+    /// tier. Above this threshold, server/cleanup_v2.py silently upgrades a
+    /// `style: "tidy"` request into struct_mode (STRUCT_MIN_CPS = 80),
+    /// returning numbered bullets that VoiceRuntimeController's cloud-cleaned
+    /// postprocessing path (LocalTranscriptPostprocessor) would corrupt by
+    /// appending "。" to every bullet -- and whose own Ollama call is
+    /// budgeted 45s server-side versus this client's 20s/25s session
+    /// timeouts. Long dictations skip this tier entirely and degrade to the
+    /// raw-text path instead of risking corrupted-and-slow output.
+    static func isEligibleForLocalGatewayFallback(_ text: String) -> Bool {
+        CleanupFidelityGuard.contentChars(text).count < 80
     }
 
     /// Long-dictation organizer. Returns nil when no provider produced a usable
@@ -362,6 +389,84 @@ struct VoiceAPI {
               cleaned.utf8.count <= Self.maxTranscriptBytes
         else { throw VoiceAPIError.invalidResponse }
         return cleaned.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// Third-tier cleanup fallback: NexVoice's own local gateway
+    /// (server/app.py `/api/cleanup`), which runs a local Ollama model when
+    /// Groq/Gemini are unavailable or over quota. Auth uses the same mutual
+    /// HMAC challenge-response as the bundled local runtime helper
+    /// (LocalRuntimeChallenge, verified compatible with server/app.py's
+    /// `_verify_hmac_request`/`LocalAuthMiddleware`) rather than a plain
+    /// bearer token, so a request can't be replayed and a response can't be
+    /// forged by a local squatter on the same port.
+    static func localGatewayRequestObject(text: String, appContext: String?) -> [String: Any] {
+        var body: [String: Any] = ["text": text, "style": "tidy"]
+        if let appContext, !appContext.isEmpty {
+            body["app_context"] = appContext
+        }
+        return body
+    }
+
+    /// Decodes and validates a `/api/cleanup` response body: extracts
+    /// `"text"`, trims whitespace, and enforces the same non-empty and
+    /// byte-cap checks every other cleanup lane in this file applies.
+    static func parseLocalGatewayResponse(_ data: Data) throws -> String {
+        guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let text = object["text"] as? String
+        else { throw VoiceAPIError.invalidResponse }
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed.utf8.count <= Self.maxTranscriptBytes else {
+            throw VoiceAPIError.invalidResponse
+        }
+        return trimmed
+    }
+
+    private func cleanWithLocalGateway(_ text: String, appContext: String?) async throws -> String {
+        guard Self.isEligibleForLocalGatewayFallback(text) else {
+            throw VoiceAPIError.serviceUnavailable("text too long for local-gateway fallback")
+        }
+        guard let token = GatewayToken.current else {
+            throw VoiceAPIError.serviceUnavailable("no gateway token")
+        }
+        do {
+            let path = "/api/cleanup"
+            let body = try JSONSerialization.data(
+                withJSONObject: Self.localGatewayRequestObject(text: text, appContext: appContext)
+            )
+            var request = URLRequest(url: URL(string: "http://127.0.0.1:5111\(path)")!)
+            request.httpMethod = "POST"
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            let nonce = LocalRuntimeChallenge.nonce()
+            request.setValue(nonce, forHTTPHeaderField: "X-NexVoice-Nonce")
+            request.setValue(
+                LocalRuntimeChallenge.requestProof(
+                    secret: token, method: "POST", path: path, nonce: nonce, body: body
+                ),
+                forHTTPHeaderField: "X-NexVoice-Proof"
+            )
+            request.httpBody = body
+
+            let (data, response) = try await limitedData(for: request, using: localGatewaySession)
+            try validate(response)
+            guard let http = response as? HTTPURLResponse,
+                  LocalRuntimeChallenge.verify(
+                      proofBase64: http.value(forHTTPHeaderField: "X-NexVoice-Response-Proof"),
+                      secret: token,
+                      message: LocalRuntimeChallenge.gatewayResponseMessage(
+                          method: "POST", path: path, nonce: nonce, statusCode: http.statusCode
+                      )
+                  )
+            // An unsigned or wrongly-signed response cannot be trusted, even
+            // if it carried a 2xx status -- do not paste an unverified body.
+            else { throw VoiceAPIError.invalidResponse }
+
+            let cleaned = try Self.parseLocalGatewayResponse(data)
+            DiagnosticLog.log("cloud cleanup unavailable, using local-gateway fallback")
+            return cleaned
+        } catch {
+            DiagnosticLog.log("cloud cleanup unavailable, local-gateway fallback failed: \(error.localizedDescription)")
+            throw error
+        }
     }
 
     private func validate(_ response: URLResponse) throws {

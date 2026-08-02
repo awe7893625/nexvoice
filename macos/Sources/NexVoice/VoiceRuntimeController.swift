@@ -580,7 +580,12 @@ final class VoiceRuntimeController {
                         )
                     }.value
                 } else {
-                    prepared = instruction
+                    prepared = await Task.detached(priority: .userInitiated) {
+                        LocalTranscriptPostprocessor.process(
+                            instruction,
+                            vocabulary: vocabulary
+                        )
+                    }.value
                 }
                 try ensureCurrent(session)
 
