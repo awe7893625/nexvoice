@@ -53,4 +53,26 @@ final class VoiceAPIContractTests: XCTestCase {
         XCTAssertEqual(VoiceAPI.finalTranscribeTimeout(audioBytes: 32_000 * 60), 92, accuracy: 0.01)
         XCTAssertEqual(VoiceAPI.finalTranscribeTimeout(audioBytes: 32_000 * 600), 240, accuracy: 0.01)
     }
+
+    // MARK: - Local-gateway cleanup fallback (third tier after Groq/Gemini)
+
+    func testLocalGatewayRequestObjectCarriesTextAndTidyStyle() {
+        let object = VoiceAPI.localGatewayRequestObject(text: "幫我看一下這個", appContext: nil)
+        XCTAssertEqual(object["text"] as? String, "幫我看一下這個")
+        XCTAssertEqual(object["style"] as? String, "tidy")
+        XCTAssertNil(object["app_context"])
+    }
+
+    func testLocalGatewayRequestObjectIncludesNonEmptyAppContext() {
+        let object = VoiceAPI.localGatewayRequestObject(text: "test", appContext: "Slack")
+        XCTAssertEqual(object["app_context"] as? String, "Slack")
+    }
+
+    func testLocalGatewayRequestObjectOmitsEmptyAppContext() {
+        // Mirrors Self.systemPrompt(_:appContext:)'s emptiness guard used by
+        // the Groq/Gemini lanes -- an empty string must not be sent as if it
+        // were a real app_context value.
+        let object = VoiceAPI.localGatewayRequestObject(text: "test", appContext: "")
+        XCTAssertNil(object["app_context"])
+    }
 }

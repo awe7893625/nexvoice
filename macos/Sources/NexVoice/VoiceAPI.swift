@@ -34,6 +34,11 @@ struct VoiceAPI {
     /// session with generous ceilings; per-request timeouts stay scaled to
     /// audio length in transcribeLocal/transcribeGroq.
     private let transcribeSession: URLSession
+    /// Local-gateway cleanup fallback (server/app.py's /api/cleanup running its
+    /// own local Ollama engine) is the third tier after Groq/Gemini fail or hit
+    /// quota. Measured ~9s on this hardware, well past the 8s default session
+    /// timeout, so it gets its own generous-timeout session.
+    private let localGatewaySession: URLSession
 
     init() {
         let configuration = URLSessionConfiguration.ephemeral
@@ -46,6 +51,11 @@ struct VoiceAPI {
         transcribeConfiguration.timeoutIntervalForRequest = 120
         transcribeConfiguration.timeoutIntervalForResource = 300
         transcribeSession = URLSession(configuration: transcribeConfiguration)
+        let localGatewayConfiguration = URLSessionConfiguration.ephemeral
+        localGatewayConfiguration.requestCachePolicy = .reloadIgnoringLocalCacheData
+        localGatewayConfiguration.timeoutIntervalForRequest = 20
+        localGatewayConfiguration.timeoutIntervalForResource = 25
+        localGatewaySession = URLSession(configuration: localGatewayConfiguration)
     }
 
     /// Base 20s covers model warm-up and dispatch; add real-time-factor
@@ -189,6 +199,10 @@ struct VoiceAPI {
         if let gemini = try? await cleanWithGemini(text, systemPrompt: systemPrompt),
            CleanupFidelityGuard.passes(original: text, candidate: gemini, mode: .tidy) {
             return gemini
+        }
+        if let local = try? await cleanWithLocalGateway(text, appContext: appContext),
+           CleanupFidelityGuard.passes(original: text, candidate: local, mode: .tidy) {
+            return local
         }
         return text
     }
@@ -359,6 +373,42 @@ struct VoiceAPI {
               let content = candidates.first?["content"] as? [String: Any],
               let parts = content["parts"] as? [[String: Any]],
               let cleaned = parts.first?["text"] as? String,
+              cleaned.utf8.count <= Self.maxTranscriptBytes
+        else { throw VoiceAPIError.invalidResponse }
+        return cleaned.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// Third-tier cleanup fallback: NexVoice's own local gateway
+    /// (server/app.py `/api/cleanup`), which runs a local Ollama model when
+    /// Groq/Gemini are unavailable or over quota. Auth is a plain bearer
+    /// token read from ~/.cache/nexvoice/gateway.token (GatewayToken.current) --
+    /// a simple string compared server-side with secrets.compare_digest, not
+    /// the HMAC challenge-response used by LocalRuntimeToken/LocalRuntimeChallenge
+    /// elsewhere in this file.
+    static func localGatewayRequestObject(text: String, appContext: String?) -> [String: Any] {
+        var body: [String: Any] = ["text": text, "style": "tidy"]
+        if let appContext, !appContext.isEmpty {
+            body["app_context"] = appContext
+        }
+        return body
+    }
+
+    private func cleanWithLocalGateway(_ text: String, appContext: String?) async throws -> String {
+        guard let token = GatewayToken.current else {
+            throw VoiceAPIError.serviceUnavailable("no gateway token")
+        }
+        let body = Self.localGatewayRequestObject(text: text, appContext: appContext)
+        var request = URLRequest(url: URL(string: "http://127.0.0.1:5111/api/cleanup")!)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(token, forHTTPHeaderField: "X-NexVoice-Token")
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+
+        let (data, response) = try await limitedData(for: request, using: localGatewaySession)
+        try validate(response)
+        guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let cleaned = object["text"] as? String,
+              !cleaned.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               cleaned.utf8.count <= Self.maxTranscriptBytes
         else { throw VoiceAPIError.invalidResponse }
         return cleaned.trimmingCharacters(in: .whitespacesAndNewlines)

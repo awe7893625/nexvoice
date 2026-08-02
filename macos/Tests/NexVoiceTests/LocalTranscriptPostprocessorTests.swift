@@ -501,6 +501,43 @@ final class LocalTranscriptPostprocessorTests: XCTestCase {
         )
     }
 
+    // MARK: - Raw-instruction fallback lane must get the same local postprocessing
+    // as the cloud-cleaned lane (VoiceRuntimeController regression)
+    //
+    // VoiceRuntimeController's dictation pipeline previously only ran
+    // LocalTranscriptPostprocessor.process(...) when cloud cleanup succeeded
+    // (`livePrefs.cleanupEnabled && livePrefs.allowsCloudText`); when cloud
+    // cleanup was disabled or unreachable, the raw `instruction` was pasted
+    // untouched, skipping this pure-local, no-network, no-cost cleanup for no
+    // reason. The fix makes the `else` branch call
+    // `LocalTranscriptPostprocessor.process(instruction, vocabulary:)` --
+    // identical to the call already made on the cloud-cleaned lane, just on
+    // the raw string. VoiceRuntimeController's own branching isn't directly
+    // unit-testable (it's wired into an async hotkey state machine), so these
+    // tests instead prove, against the postprocessor itself, that raw
+    // dictation text gets exactly the same treatment the cloud-cleaned lane
+    // already relies on -- using the same fixture strings as the tests above.
+
+    func testRawFallbackLaneFixtureGetsSpokenPunctuationAndTraditionalChineseJustLikeCloudLane() {
+        XCTAssertEqual(
+            LocalTranscriptPostprocessor.process(
+                "今天开会逗号明天再做句号",
+                vocabulary: []
+            ),
+            "今天開會，明天再做。"
+        )
+    }
+
+    func testRawFallbackLaneFixtureGetsFillerAndSelfCorrectionCleanupJustLikeCloudLane() {
+        XCTAssertEqual(
+            LocalTranscriptPostprocessor.preview(
+                "先訂週三，不對，應該訂週四", vocabulary: [],
+                fillerWordCleanupEnabled: true, selfCorrectionCleanupEnabled: true
+            ),
+            "應該訂週四"
+        )
+    }
+
     func testFillerAndSelfCorrectionCleanupCanBeDisabledIndependently() {
         XCTAssertEqual(
             LocalTranscriptPostprocessor.preview(
