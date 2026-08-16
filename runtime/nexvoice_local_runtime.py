@@ -93,6 +93,43 @@ class RuntimeBusy(RuntimeError):
     pass
 
 
+MODEL_MANIFEST = Path(__file__).with_name("model-manifest.json")
+_PINNED_PATH_CACHE: dict[str, str] = {}
+
+
+def pinned_model_path(model: str) -> str:
+    """Resolve `model` to the exact manifest revision when one is pinned.
+
+    mlx-whisper calls `snapshot_download(repo_id=...)` with no revision, so a
+    bare repo id silently tracks whatever that repository's default branch
+    points at today. The manifest has always recorded a `revision`, but nothing
+    read it -- the pin was decorative. That matters more now that the default
+    model is a third-party conversion rather than an `mlx-community` build.
+
+    Returns a local snapshot path when the pin applies and resolves, otherwise
+    the model string unchanged: a pin that cannot be honoured must never stop
+    the user from dictating.
+    """
+    if model in _PINNED_PATH_CACHE:
+        return _PINNED_PATH_CACHE[model]
+    resolved = model
+    try:
+        manifest = json.loads(MODEL_MANIFEST.read_text(encoding="utf-8"))
+        revision = manifest.get("revision") or ""
+        # Only pin the model the manifest actually describes. A user who points
+        # NEXVOICE_MLX_MODEL somewhere else gets that repo's own default.
+        if manifest.get("model") == model and revision and not os.path.isdir(model):
+            from huggingface_hub import snapshot_download  # type: ignore
+
+            resolved = snapshot_download(repo_id=model, revision=revision)
+    except Exception:
+        # Offline, no hub package, malformed manifest, revision withdrawn --
+        # all fall back to the unpinned id rather than failing transcription.
+        resolved = model
+    _PINNED_PATH_CACHE[model] = resolved
+    return resolved
+
+
 def _secret_bytes() -> bytes | None:
     """Shared HMAC key. Never sent on the wire -- only used to compute and
     verify proofs, so a listener that has not read this 0600 file (e.g. a
@@ -312,6 +349,7 @@ def transcribe_wav(
         if quality == "partial"
         else os.environ.get("NEXVOICE_MLX_MODEL", "eoleedi/Breeze-ASR-25-mlx")
     )
+    model = pinned_model_path(model)
     partial_gate_acquired = quality != "partial" or _PARTIAL_GATE.acquire(blocking=False)
     if not partial_gate_acquired:
         raise RuntimeBusy("partial transcription already running")

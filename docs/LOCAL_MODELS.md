@@ -55,6 +55,25 @@ ordinary English word beats a glossary hint, and adding the term to
 dictionary entry (phrase `Claude Code`, sounds-like `cloud code`), which
 `LocalTranscriptPostprocessor` applies to the final transcript.
 
+## Existing installs keep their old setting
+
+`server/db.py` seeds settings with `INSERT OR IGNORE`, so a gateway database
+created before this change keeps `local_model = mlx-community/whisper-large-v3-turbo`.
+That is deliberate — a stored setting is not overwritten behind the user's
+back — but it means upgrading does not switch the model on its own. Change it
+in **設定 → 本地 MLX 模型**, or set `NEXVOICE_MLX_MODEL`.
+
+## Revision pinning
+
+`runtime/model-manifest.json` records the exact model revision, and
+`pinned_model_path()` resolves the configured model through
+`snapshot_download(repo_id, revision=...)` so that pin is real rather than
+decorative — mlx-whisper on its own would download whatever the repository's
+default branch points at today. The pin applies only to the model the manifest
+names; point `NEXVOICE_MLX_MODEL` elsewhere and you get that repo's default.
+If the pin cannot be resolved (offline, revision withdrawn) the runtime falls
+back to the unpinned id rather than refusing to transcribe.
+
 ## Before a public release
 
 The default is currently a third-party MLX conversion. Its `config.json`
