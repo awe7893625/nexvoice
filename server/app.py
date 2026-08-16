@@ -47,7 +47,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "port": 5111,
     "gemini_api_key_env": "GEMINI_API_KEY",
     "cloud_model": "gemini-2.5-flash",
-    "local_model": "mlx-community/whisper-large-v3-turbo",
+    "local_model": "eoleedi/Breeze-ASR-25-mlx",
     "cleanup_ollama_model": "qwen2.5:3b",
     "db_path": str(_PROJECT_ROOT / "data" / "nexvoice.db"),
 }

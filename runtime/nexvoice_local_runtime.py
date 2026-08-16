@@ -77,6 +77,12 @@ _SHUTTING_DOWN = threading.Event()
 # prompt, so a long "、"-separated glossary teaches the decoder to sprinkle
 # 頓號 lists into ordinary speech (the "NexVoice、Jonel、…" artifact). Common
 # tech words decode fine without hints and only bloat that list.
+# Tried and reverted 2026-08-16: adding "Claude Code" here does NOT stop either
+# whisper-large-v3-turbo or Breeze ASR from decoding it as "cloud code" — the
+# acoustic evidence for the ordinary English word beats a prompt hint. Measured,
+# not assumed. The working fix is a sounds-like dictionary entry
+# ("Claude Code" ← "cloud code"), which LocalTranscriptPostprocessor applies to
+# the final transcript. Keep this list to terms that a hint actually changes.
 BASE_TERMS = [
     "NexVoice", "NexPilot", "NexDesk", "Typeless", "Whisper", "MLX",
     "Hammerspoon", "Obsidian",
@@ -304,7 +310,7 @@ def transcribe_wav(
     model = (
         os.environ.get("NEXVOICE_MLX_PARTIAL_MODEL", "mlx-community/whisper-tiny")
         if quality == "partial"
-        else os.environ.get("NEXVOICE_MLX_MODEL", "mlx-community/whisper-large-v3-turbo")
+        else os.environ.get("NEXVOICE_MLX_MODEL", "eoleedi/Breeze-ASR-25-mlx")
     )
     partial_gate_acquired = quality != "partial" or _PARTIAL_GATE.acquire(blocking=False)
     if not partial_gate_acquired:
