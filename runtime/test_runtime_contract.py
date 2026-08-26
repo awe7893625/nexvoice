@@ -264,7 +264,9 @@ class RuntimeContractTests(unittest.TestCase):
 
         fake = types.ModuleType("mlx_whisper")
         fake.transcribe = fake_transcribe
-        with patch.dict(sys.modules, {"mlx_whisper": fake}):
+        with patch.dict(os.environ, {"NEXVOICE_VAD": "0"}), patch.dict(
+            sys.modules, {"mlx_whisper": fake}
+        ):
             text = runtime.transcribe_wav(audio)
         self.assertEqual(seen["temperature"], runtime.TEMPERATURE_FALLBACK)
         self.assertFalse(seen["condition_on_previous_text"])

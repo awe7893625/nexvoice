@@ -14,6 +14,7 @@ import importlib
 import importlib.metadata
 import io
 import json
+import logging
 import math
 import os
 import re
@@ -41,6 +42,15 @@ MAX_VOCAB_TERM_BYTES = 128
 MAX_VOCAB_TOTAL_BYTES = 1536
 MAX_PROMPT_BYTES = 2048
 SILENCE_PEAK_THRESHOLD = 0.03
+# VAD deliberately stays a pre-gate, not a second transcription pipeline. A
+# short frame and hop keep partial captions responsive while the padding keeps
+# the model's timestamps useful. Internal gaps are never removed: punctuation
+# inference below relies on the gap between Whisper segments.
+VAD_FRAME_MS = 30
+VAD_HOP_MS = 15
+VAD_PADDING_MS = 120
+VAD_MIN_SPEECH_MS = 90
+VAD_LOGGER = logging.getLogger(__name__)
 # Whisper's anti-repetition mechanism: when greedy (t=0) decoding fails the
 # compression-ratio check (the signature of a "可以看到，可以看到，…" loop),
 # decode_with_fallback retries at the next temperature. A scalar temperature=0
@@ -72,6 +82,7 @@ _MODEL_LOCK = threading.Lock()
 _PARTIAL_GATE = threading.Lock()
 _MODEL_CACHE: dict[str, object] = {}
 _SHUTTING_DOWN = threading.Event()
+_VAD_TIER: str | None = None
 
 # Distinctive product names only. Whisper mirrors the *style* of the initial
 # prompt, so a long "、"-separated glossary teaches the decoder to sprinkle
@@ -321,6 +332,100 @@ def collapse_repetition_loops(text: str) -> str:
     return text
 
 
+def _vad_enabled() -> bool:
+    return os.environ.get("NEXVOICE_VAD", "1").strip().casefold() not in {"0", "false"}
+
+
+def _numpy_vad(samples, sample_rate: int) -> tuple[bool, int, int]:
+    """Find speech-like outer bounds with numpy energy and zero crossings.
+
+    Energy alone mistakes clicks, tones, and HVAC noise for speech. The small
+    zero-crossing test rejects those steady extremes while retaining ordinary
+    voiced/unvoiced speech. This is a gate, not a speech recognizer.
+    """
+    import numpy as np
+
+    if len(samples) == 0:
+        return False, 0, 0
+    frame_size = max(1, int(sample_rate * VAD_FRAME_MS / 1000))
+    hop_size = max(1, int(sample_rate * VAD_HOP_MS / 1000))
+    if len(samples) < frame_size:
+        return False, 0, 0
+    starts = np.arange(0, len(samples) - frame_size + 1, hop_size)
+    frames = np.asarray(samples, dtype=np.float32)[starts[:, None] + np.arange(frame_size)]
+    rms = np.sqrt(np.mean(frames * frames, axis=1) + 1e-12)
+    crossings = np.mean((frames[:, 1:] * frames[:, :-1]) < 0, axis=1)
+    noise_floor = float(np.percentile(rms, 20))
+    # A 20th-percentile floor is still part of a quiet utterance when the
+    # clip contains speech throughout, so a modest ratio keeps voiced frames
+    # while the crossing/variation checks reject stationary noise.
+    energy_cutoff = max(noise_floor * 1.35, 0.012)
+    # White noise is near 0.5 crossings/sample; a steady tone is near zero.
+    candidates = (rms >= energy_cutoff) & (crossings >= 0.01) & (crossings <= 0.35)
+    if int(candidates.sum()) < max(3, int(VAD_MIN_SPEECH_MS / VAD_FRAME_MS)):
+        return False, 0, 0
+    # Steady tones can sit in the crossing range, so require movement in the
+    # candidate envelope or in its crossing rate, as real speech has both.
+    candidate_rms = rms[candidates]
+    candidate_zcr = crossings[candidates]
+    if float(np.ptp(candidate_rms)) < 0.01 and float(np.ptp(candidate_zcr)) < 0.02:
+        return False, 0, 0
+    indices = np.flatnonzero(candidates)
+    pad = int(sample_rate * VAD_PADDING_MS / 1000)
+    start = max(0, int(indices[0] * hop_size) - pad)
+    end = min(len(samples), int(indices[-1] * hop_size + frame_size) + pad)
+    if end - start < int(sample_rate * VAD_MIN_SPEECH_MS / 1000):
+        return False, 0, 0
+    return True, start, end
+
+
+def _select_vad_tier() -> str:
+    """Choose and report the available VAD backend once per process."""
+    global _VAD_TIER
+    if _VAD_TIER is not None:
+        return _VAD_TIER
+    # An ONNX tier is a deliberate future option, gated on shipping and
+    # testing a real model; the verified backend that ships today is numpy.
+    _VAD_TIER = "numpy"
+    VAD_LOGGER.info("NexVoice VAD tier: %s", _VAD_TIER)
+    return _VAD_TIER
+
+
+def _vad_bounds(samples, sample_rate: int) -> tuple[bool, int, int]:
+    """Run the verified VAD backend."""
+    _select_vad_tier()
+    return _numpy_vad(samples, sample_rate)
+
+
+def _trim_wav_for_vad(audio: bytes) -> bytes:
+    """Reject or outer-trim a PCM WAV before paying the Whisper decode cost."""
+    import numpy as np
+
+    with wave.open(io.BytesIO(audio), "rb") as wav:
+        params = wav.getparams()
+        raw = wav.readframes(wav.getnframes())
+    if not raw or params.sampwidth != 2:
+        return audio
+    samples = (
+        np.frombuffer(raw, dtype="<i2")
+        .reshape(-1, params.nchannels)
+        .mean(axis=1)
+        / 32768.0
+    )
+    speech, start, end = _vad_bounds(samples, params.framerate)
+    if not speech:
+        return b""
+    if start == 0 and end >= len(samples):
+        return audio
+    frame_width = params.sampwidth * params.nchannels
+    trimmed = raw[start * frame_width : end * frame_width]
+    output = io.BytesIO()
+    with wave.open(output, "wb") as wav:
+        wav.setparams(params)
+        wav.writeframes(trimmed)
+    return output.getvalue()
+
+
 def transcribe_wav(
     audio: bytes,
     *,
@@ -340,6 +445,16 @@ def transcribe_wav(
             return ""
     except (OSError, ValueError, OverflowError):
         pass
+    audio_for_model = audio
+    if _vad_enabled():
+        try:
+            audio_for_model = _trim_wav_for_vad(audio)
+            if not audio_for_model:
+                return ""
+        except (OSError, ValueError, OverflowError, ImportError):
+            # Preserve the existing decode path for malformed or unsupported
+            # WAVs; the peak gate above remains the cheap first pass.
+            audio_for_model = audio
     try:
         import mlx_whisper  # type: ignore
     except ImportError as exc:
@@ -367,7 +482,7 @@ def transcribe_wav(
             except (AttributeError, ImportError):
                 holder = None
             with tempfile.NamedTemporaryFile(suffix=".wav") as handle:
-                handle.write(audio)
+                handle.write(audio_for_model)
                 handle.flush()
                 result = mlx_whisper.transcribe(
                     handle.name,
