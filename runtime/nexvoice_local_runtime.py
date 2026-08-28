@@ -309,6 +309,44 @@ def join_segments_with_punctuation(segments: list) -> str:
     return out.strip()
 
 
+def to_srt(segments: list[dict]) -> str:
+    """Render Whisper segments as standard SubRip (SRT) text.
+
+    Whisper timestamps are fractional seconds. SRT uses rounded milliseconds;
+    carrying through the total millisecond count keeps values such as
+    ``59.9996`` from producing an invalid ``00:00:59,1000`` timestamp.
+    """
+
+    def timestamp(seconds: object) -> str:
+        try:
+            total_milliseconds = max(0, int(float(seconds) * 1000 + 0.5))
+        except (TypeError, ValueError, OverflowError):
+            total_milliseconds = 0
+        hours, remainder = divmod(total_milliseconds, 3_600_000)
+        minutes, remainder = divmod(remainder, 60_000)
+        whole_seconds, milliseconds = divmod(remainder, 1000)
+        return f"{hours:02d}:{minutes:02d}:{whole_seconds:02d},{milliseconds:03d}"
+
+    blocks = []
+    number = 0
+    for segment in segments:
+        if not isinstance(segment, dict):
+            continue
+        number += 1
+        text = str(segment.get("text", "")).strip()
+        blocks.append(
+            "\n".join(
+                (
+                    str(number),
+                    f"{timestamp(segment.get('start', 0.0))} --> "
+                    f"{timestamp(segment.get('end', segment.get('start', 0.0)))}",
+                    text,
+                )
+            )
+        )
+    return "\n\n".join(blocks)
+
+
 # A phrase (2-32 chars) repeated 3+ times back-to-back over a span of ≥10
 # chars is a decoder loop, never real dictation. Short bursts ("哈哈哈哈哈哈")
 # stay untouched via the span floor.
@@ -426,24 +464,24 @@ def _trim_wav_for_vad(audio: bytes) -> bytes:
     return output.getvalue()
 
 
-def transcribe_wav(
+def _transcribe_core(
     audio: bytes,
     *,
     quality: str = "final",
     vocab_terms: list[str] | None = None,
     skip_vad: bool = False,
-) -> str:
-    """Run MLX Whisper when the optional local dependency is installed."""
+) -> tuple[str, list]:
+    """Run MLX Whisper and return the cleaned text plus native segments."""
     # Never ask Whisper to decode a muted/empty recording: Whisper can emit
     # memorized broadcast phrases for silence, which must never be pasted.
     try:
         with wave.open(__import__("io").BytesIO(audio), "rb") as wav:
             raw = wav.readframes(wav.getnframes())
         if not raw:
-            return ""
+            return "", []
         peak = max(abs(sample) for sample in __import__("array").array("h", raw)) / 32768.0
         if peak < SILENCE_PEAK_THRESHOLD:
-            return ""
+            return "", []
     except (OSError, ValueError, OverflowError):
         pass
     audio_for_model = audio
@@ -453,7 +491,7 @@ def transcribe_wav(
         try:
             audio_for_model = _trim_wav_for_vad(audio)
             if not audio_for_model:
-                return ""
+                return "", []
         except (OSError, ValueError, OverflowError, ImportError):
             # Preserve the existing decode path for malformed or unsupported
             # WAVs; the peak gate above remains the cheap first pass.
@@ -508,8 +546,23 @@ def transcribe_wav(
     if isinstance(segments, list) and segments:
         text = join_segments_with_punctuation(segments)
     else:
+        segments = []
         text = str(result.get("text", "")).strip()
-    return collapse_repetition_loops(text)
+    return collapse_repetition_loops(text), segments
+
+
+def transcribe_wav(
+    audio: bytes,
+    *,
+    quality: str = "final",
+    vocab_terms: list[str] | None = None,
+    skip_vad: bool = False,
+) -> str:
+    """Run MLX Whisper when the optional local dependency is installed."""
+    text, _segments = _transcribe_core(
+        audio, quality=quality, vocab_terms=vocab_terms, skip_vad=skip_vad
+    )
+    return text
 
 
 def _make_warmup_wav() -> bytes:
@@ -703,25 +756,45 @@ class Handler(BaseHTTPRequestHandler):
             sequence = body.get("sequence", 0)
             if isinstance(sequence, bool) or not isinstance(sequence, int) or not 0 <= sequence <= 1_000_000:
                 raise ValueError("invalid sequence")
+            want_segments = body.get("want_segments", False)
+            want_srt = body.get("want_srt", False)
+            if not isinstance(want_segments, bool) or not isinstance(want_srt, bool):
+                raise ValueError("want_segments and want_srt must be booleans")
             vocab_terms = safe_vocab_terms(body.get("vocab_terms", []))
             started = time.monotonic()
-            text = transcribe_wav(audio, quality=quality, vocab_terms=vocab_terms)
+            if want_segments or want_srt:
+                text, segments = _transcribe_core(
+                    audio, quality=quality, vocab_terms=vocab_terms
+                )
+            else:
+                text = transcribe_wav(audio, quality=quality, vocab_terms=vocab_terms)
+                segments = []
             nonce = self.headers.get("X-NexVoice-Local-Nonce", "")
-            self._json(
-                200,
-                {
-                    "text": text,
-                    "ms": int((time.monotonic() - started) * 1000),
-                    "session": session,
-                    "sequence": sequence,
-                    "contract_version": CONTRACT_VERSION,
-                    "runtime_build": RUNTIME_BUILD,
-                    "instance_id": INSTANCE_ID,
-                    "response_proof": _proof(
-                        secret, transcribe_response_proof_message(nonce, session, sequence, text)
-                    ),
-                },
-            )
+            response = {
+                "text": text,
+                "ms": int((time.monotonic() - started) * 1000),
+                "session": session,
+                "sequence": sequence,
+                "contract_version": CONTRACT_VERSION,
+                "runtime_build": RUNTIME_BUILD,
+                "instance_id": INSTANCE_ID,
+                "response_proof": _proof(
+                    secret, transcribe_response_proof_message(nonce, session, sequence, text)
+                ),
+            }
+            if want_segments:
+                response["segments"] = [
+                    {
+                        "start": segment.get("start"),
+                        "end": segment.get("end"),
+                        "text": str(segment.get("text", "")).strip(),
+                    }
+                    for segment in segments
+                    if isinstance(segment, dict)
+                ]
+            if want_srt:
+                response["srt"] = to_srt(segments)
+            self._json(200, response)
         except RuntimeBusy:
             self._json(409, {"error": "busy"})
         except Exception as exc:  # do not expose paths or secrets
