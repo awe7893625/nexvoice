@@ -15,6 +15,7 @@ Exit 0 = all cases pass; nonzero = failures (each case listed).
 from __future__ import annotations
 
 import io
+import os
 import subprocess
 import sys
 import tempfile
@@ -44,7 +45,7 @@ def record(name: str, expect: str, got: str) -> None:
     print(f"{'PASS' if ok else 'FAIL'}  {name}  (expect {expect}, got {got})")
 
 
-def synth_say(text: str, voice: str, workdir: Path) -> Path:
+def synth_say(text: str, voice: str, workdir: Path) -> tuple[Path, str]:
     aiff = workdir / f"say_{voice}.aiff"
     subprocess.run(["say", "-v", voice, "-o", str(aiff), text], check=True)
     wav = workdir / f"say_{voice}_16k.wav"
@@ -55,9 +56,14 @@ def synth_say(text: str, voice: str, workdir: Path) -> Path:
     with wave.open(str(wav), "rb") as rendered:
         has_audio = rendered.getnframes() > 0
     if not has_audio:
-        # Headless macOS can expose these voices while returning an empty
-        # render. Keep the VAD matrix runnable with a deterministic voiced
-        # fixture; normal macOS runs continue to use the real TTS output.
+        # A zero-frame render must never silently degrade TTS acceptance into
+        # a synthetic-fixture pass. Portability mode (VAD_TEST_ALLOW_SYNTHETIC
+        # =1) keeps the matrix runnable on headless runners, clearly labelled;
+        # strict mode (default) blocks instead.
+        if os.environ.get("VAD_TEST_ALLOW_SYNTHETIC") != "1":
+            raise RuntimeError(
+                f"say rendered 0 frames for voice {voice!r}; TTS acceptance blocked"
+            )
         sample_rate = 16000
         t = np.arange(sample_rate, dtype=np.float32) / sample_rate
         active = (t >= 0.2) & (t < 0.8)
@@ -70,8 +76,9 @@ def synth_say(text: str, voice: str, workdir: Path) -> Path:
             fallback.setsampwidth(2)
             fallback.setframerate(sample_rate)
             fallback.writeframes((samples * 32768.0).astype("<i2").tobytes())
-        print(f"synth {voice}: TTS returned 0 frames; using voiced fallback")
-    return wav
+        print(f"synth {voice}: TTS returned 0 frames; source=synthetic-fallback")
+        return wav, "synthetic-fallback"
+    return wav, "say"
 
 
 def read_wav(path: Path) -> tuple[np.ndarray, object]:
@@ -100,11 +107,11 @@ def main() -> int:
         workdir = Path(tmp)
         speech = {}
         for voice, text in (("Meijia", ZH_TEXT), ("Samantha", EN_TEXT)):
-            path = synth_say(text, voice, workdir)
+            path, source = synth_say(text, voice, workdir)
             samples, params = read_wav(path)
             speech[voice] = (samples, params)
             dur = len(samples) / params.framerate
-            print(f"synth {voice}: {dur:.2f}s @ {params.framerate} Hz")
+            print(f"synth {voice}: {dur:.2f}s @ {params.framerate} Hz source={source}")
 
         # Positive: real speech survives the gate at every level, and the trim
         # keeps the utterance (bounds must not eat more than the padding).
@@ -169,7 +176,11 @@ def main() -> int:
 
     print()
     passed = sum(1 for _, e, g in results if e == g)
-    print(f"RESULT: {passed}/{len(results)} pass")
+    known = sum(1 for name, e, g in results if e == g and name.startswith("KNOWN-LIMITATION"))
+    print(
+        f"RESULT: {passed - known}/{len(results) - known} acceptance pass"
+        f" (+{known} KNOWN-LIMITATION reproduced)"
+    )
     if failures:
         print("FAILURES:")
         for line in failures:
