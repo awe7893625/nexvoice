@@ -359,7 +359,7 @@ def _numpy_vad(samples, sample_rate: int) -> tuple[bool, int, int]:
     # A 20th-percentile floor is still part of a quiet utterance when the
     # clip contains speech throughout, so a modest ratio keeps voiced frames
     # while the crossing/variation checks reject stationary noise.
-    energy_cutoff = max(noise_floor * 1.35, 0.012)
+    energy_cutoff = max(noise_floor * 1.35, 0.006)
     # White noise is near 0.5 crossings/sample; a steady tone is near zero.
     candidates = (rms >= energy_cutoff) & (crossings >= 0.01) & (crossings <= 0.35)
     if int(candidates.sum()) < max(3, int(VAD_MIN_SPEECH_MS / VAD_FRAME_MS)):
