@@ -10,6 +10,20 @@ enum VoiceMode: String, CaseIterable, Codable, Sendable {
     }
 }
 
+enum TranslationPasteContent: String, CaseIterable, Codable, Sendable {
+    case translation
+    case original
+    case both
+
+    var displayName: String {
+        switch self {
+        case .translation: "譯文"
+        case .original: "原文"
+        case .both: "兩者"
+        }
+    }
+}
+
 /// Retired 2026-07-25 (Rain: "又細又長又醜"): ink/spectrum/floatVoice/ekg/
 /// silk/cascade/meteor were all variations on a thin pale line or a scatter of
 /// dim dots -- the two things that read as unfinished on a black capsule.
@@ -133,6 +147,7 @@ struct ProductPreferences: Codable, Equatable, Sendable {
     var ask: HotkeyProfile = HotkeyProfile(trigger: .function, behavior: .toggle)
     var interfaceLanguage = "繁體中文（台灣）"
     var translationTarget = "英語（美國）"
+    var translationPasteContent: TranslationPasteContent = .translation
     var interactionSounds = true
     var muteOtherAudio = true
     var showDockIcon = true
@@ -145,7 +160,7 @@ struct ProductPreferences: Codable, Equatable, Sendable {
     var appTheme: AppTheme = .pristine
 
     private enum CodingKeys: String, CodingKey {
-        case dictate, translate, ask, interfaceLanguage, translationTarget
+        case dictate, translate, ask, interfaceLanguage, translationTarget, translationPasteContent
         case interactionSounds, muteOtherAudio, showDockIcon
         case fillerWordCleanupEnabled, selfCorrectionCleanupEnabled
         case hudStyle, hudChrome, liveCaptionsEnabled, subtitleStyle, appTheme
@@ -162,6 +177,11 @@ struct ProductPreferences: Codable, Equatable, Sendable {
             ?? HotkeyProfile(trigger: .function, behavior: .toggle)
         interfaceLanguage = try values.decodeIfPresent(String.self, forKey: .interfaceLanguage) ?? "繁體中文（台灣）"
         translationTarget = try values.decodeIfPresent(String.self, forKey: .translationTarget) ?? "英語（美國）"
+        if let rawTranslationPasteContent = try values.decodeIfPresent(String.self, forKey: .translationPasteContent) {
+            translationPasteContent = TranslationPasteContent(rawValue: rawTranslationPasteContent) ?? .translation
+        } else {
+            translationPasteContent = .translation
+        }
         interactionSounds = try values.decodeIfPresent(Bool.self, forKey: .interactionSounds) ?? true
         muteOtherAudio = try values.decodeIfPresent(Bool.self, forKey: .muteOtherAudio) ?? true
         showDockIcon = try values.decodeIfPresent(Bool.self, forKey: .showDockIcon) ?? true

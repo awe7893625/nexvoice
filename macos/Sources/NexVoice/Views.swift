@@ -385,12 +385,22 @@ private struct HomePage: View {
                         }
 
                         VStack(alignment: .leading, spacing: 10) {
-                            Text(model.lastTranscript)
-                                .font(.system(size: 14, weight: .regular))
-                                .foregroundStyle(NV.ink)
-                                .lineSpacing(5)
-                                .textSelection(.enabled)
-                                .frame(maxWidth: .infinity, alignment: .leading)
+                            if let translation = model.lastTranslation {
+                                resultTextBlock(title: "原文", text: model.lastOriginalTranscript)
+                                resultTextBlock(title: "譯文", text: translation)
+                            } else if model.lastTranslationFailed {
+                                resultTextBlock(title: "原文", text: model.lastOriginalTranscript)
+                                Text("翻譯失敗，已貼上原文")
+                                    .font(.system(size: 12, weight: .semibold))
+                                    .foregroundStyle(NV.warn)
+                            } else {
+                                Text(model.lastTranscript)
+                                    .font(.system(size: 14, weight: .regular))
+                                    .foregroundStyle(NV.ink)
+                                    .lineSpacing(5)
+                                    .textSelection(.enabled)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            }
                         }
                         .padding(14)
                         .background(
@@ -424,6 +434,20 @@ private struct HomePage: View {
                 }
             }
             .padding(28)
+        }
+    }
+
+    private func resultTextBlock(title: String, text: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(NV.secondary)
+            Text(text)
+                .font(.system(size: 14, weight: .regular))
+                .foregroundStyle(NV.ink)
+                .lineSpacing(5)
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
@@ -907,6 +931,16 @@ private struct SettingsPage: View {
                     Text("日語").tag("日語")
                     Text("韓語").tag("韓語")
                     Text("繁體中文").tag("繁體中文")
+                }
+                .labelsHidden()
+                .frame(width: 170)
+            })
+            Divider().overlay(NV.hairline)
+            settingsRow(title: "翻譯貼上內容", detail: "選擇貼上的文字內容", trailing: {
+                Picker("翻譯貼上內容", selection: $model.productPreferences.translationPasteContent) {
+                    ForEach(TranslationPasteContent.allCases, id: \.self) { content in
+                        Text(content.displayName).tag(content)
+                    }
                 }
                 .labelsHidden()
                 .frame(width: 170)

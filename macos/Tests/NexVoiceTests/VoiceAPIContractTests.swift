@@ -147,4 +147,29 @@ final class VoiceAPIContractTests: XCTestCase {
             }
         }
     }
+
+    func testTranslationPromptKeepsTargetLanguageAndCapsGlossary() {
+        let terms = (1...20).map { "Term\($0)" }
+        let prompt = VoiceAPI.translationSystemPrompt(targetLanguage: "英語（美國）", glossary: terms)
+
+        XCTAssertTrue(prompt.contains("「英語（美國）」"))
+        XCTAssertTrue(prompt.contains("只輸出譯文，不要前言、引號"))
+        XCTAssertTrue(prompt.contains("術語保留原文或採其慣用譯名，不得意譯改寫"))
+        XCTAssertTrue(prompt.contains("- Term16"))
+        XCTAssertFalse(prompt.contains("- Term17"))
+    }
+
+    func testTranslationLocalGatewayRequestCarriesTranslationContext() {
+        let object = VoiceAPI.localGatewayRequestObject(
+            text: "請翻譯這段話",
+            appContext: nil,
+            style: "translate",
+            targetLanguage: "日語",
+            glossary: ["NexVoice"]
+        )
+
+        XCTAssertEqual(object["style"] as? String, "translate")
+        XCTAssertEqual(object["target_language"] as? String, "日語")
+        XCTAssertEqual(object["glossary"] as? [String], ["NexVoice"])
+    }
 }
