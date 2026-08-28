@@ -431,6 +431,7 @@ def transcribe_wav(
     *,
     quality: str = "final",
     vocab_terms: list[str] | None = None,
+    skip_vad: bool = False,
 ) -> str:
     """Run MLX Whisper when the optional local dependency is installed."""
     # Never ask Whisper to decode a muted/empty recording: Whisper can emit
@@ -446,7 +447,9 @@ def transcribe_wav(
     except (OSError, ValueError, OverflowError):
         pass
     audio_for_model = audio
-    if _vad_enabled():
+    # Warmup clips are internal synthetic audio; bypass VAD so they always
+    # exercise model loading while real user audio still pays the pre-gate.
+    if _vad_enabled() and not skip_vad:
         try:
             audio_for_model = _trim_wav_for_vad(audio)
             if not audio_for_model:
@@ -553,7 +556,7 @@ def _warm_final_model() -> None:
     """
     started = time.monotonic()
     try:
-        transcribe_wav(_make_warmup_wav(), quality="final")
+        transcribe_wav(_make_warmup_wav(), quality="final", skip_vad=True)
     except Exception as exc:  # pragma: no cover - best-effort only, e.g. mlx-whisper missing
         print(f"warmup: final model failed: {type(exc).__name__}: {exc}", flush=True)
         return
@@ -573,7 +576,7 @@ def _warm_partial_model() -> None:
     """
     started = time.monotonic()
     try:
-        transcribe_wav(_make_warmup_wav(), quality="partial")
+        transcribe_wav(_make_warmup_wav(), quality="partial", skip_vad=True)
     except Exception as exc:  # pragma: no cover - best-effort only, e.g. mlx-whisper missing
         print(f"warmup: partial model failed: {type(exc).__name__}: {exc}", flush=True)
         return
