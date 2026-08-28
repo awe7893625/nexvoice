@@ -10,8 +10,11 @@ from cleanup_v2 import (
     _cleanup_looks_bad,
     _structure_looks_bad,
     _minimal_looks_bad,
+    _translate_system_prompt,
     cleanup_text,
     STRUCT_MIN_CPS,
+    DEFAULT_TRANSLATE_TARGET_LANGUAGE,
+    TRANSLATE_GLOSSARY_MAX,
 )
 
 
@@ -243,6 +246,145 @@ class TestCleanupTextModes:
                 cleanup_text(
                     "test", engine="groq", app_context="TextEdit", style="tidy"
                 )
+
+
+class TestTranslateStyle:
+    """Test the translate style: system prompt construction + dispatch."""
+
+    def test_prompt_with_target_language_and_glossary(self):
+        prompt = _translate_system_prompt(
+            target_language="英語（美國）", glossary=["NexVoice", "STT"]
+        )
+        assert "英語（美國）" in prompt
+        assert "術語表" in prompt
+        assert "- NexVoice" in prompt
+        assert "- STT" in prompt
+
+    def test_prompt_missing_target_language_degrades(self):
+        # No target_language -> falls back to the default language, no crash.
+        prompt = _translate_system_prompt(target_language=None, glossary=["foo"])
+        assert DEFAULT_TRANSLATE_TARGET_LANGUAGE in prompt
+        assert "foo" in prompt
+
+    def test_prompt_missing_glossary_omits_glossary_block(self):
+        prompt = _translate_system_prompt(
+            target_language="日本語", glossary=None
+        )
+        assert "日本語" in prompt
+        assert "術語表：" not in prompt
+
+    def test_prompt_empty_glossary_list_omits_glossary_block(self):
+        prompt = _translate_system_prompt(target_language="日本語", glossary=[])
+        assert "術語表：" not in prompt
+
+    def test_prompt_glossary_over_cap_is_truncated(self):
+        glossary = [f"term{i}" for i in range(TRANSLATE_GLOSSARY_MAX + 5)]
+        prompt = _translate_system_prompt(target_language="英語", glossary=glossary)
+        for i in range(TRANSLATE_GLOSSARY_MAX):
+            assert f"term{i}" in prompt
+        for i in range(TRANSLATE_GLOSSARY_MAX, TRANSLATE_GLOSSARY_MAX + 5):
+            assert f"term{i}" not in prompt
+
+    def test_translate_style_is_valid(self):
+        from cleanup_v2 import VALID_STYLES
+
+        assert "translate" in VALID_STYLES
+
+    def test_cleanup_text_translate_full_params(self):
+        """translate style with target_language + glossary reaches the
+        engine with a prompt containing both, and never falls back to
+        DEFAULT_STYLE ('tidy')."""
+        captured = {}
+
+        def fake_groq(raw, model, system_prompt, timeout):
+            captured["system_prompt"] = system_prompt
+            return "Translated output"
+
+        with (
+            patch("cleanup_v2._try_groq", side_effect=fake_groq),
+            patch(
+                "cleanup_v2.vocab_store.apply_sounds_like", side_effect=lambda x: x
+            ),
+        ):
+            result = cleanup_text(
+                "這是一段原始逐字稿內容",
+                engine="groq",
+                style="translate",
+                target_language="英語（美國）",
+                glossary=["NexVoice", "STT"],
+            )
+        assert result == "Translated output"
+        assert "英語（美國）" in captured["system_prompt"]
+        assert "- NexVoice" in captured["system_prompt"]
+
+    def test_cleanup_text_translate_missing_target_language_degrades(self):
+        """No target_language provided -- must not crash and must not
+        produce empty output; falls back to the default target language."""
+        captured = {}
+
+        def fake_groq(raw, model, system_prompt, timeout):
+            captured["system_prompt"] = system_prompt
+            return "Translated output"
+
+        with (
+            patch("cleanup_v2._try_groq", side_effect=fake_groq),
+            patch(
+                "cleanup_v2.vocab_store.apply_sounds_like", side_effect=lambda x: x
+            ),
+        ):
+            result = cleanup_text(
+                "這是一段原始逐字稿內容", engine="groq", style="translate", glossary=["NexVoice"]
+            )
+        assert result == "Translated output"
+        assert DEFAULT_TRANSLATE_TARGET_LANGUAGE in captured["system_prompt"]
+
+    def test_cleanup_text_translate_missing_glossary(self):
+        """No glossary provided -- must not crash, glossary block omitted."""
+        captured = {}
+
+        def fake_groq(raw, model, system_prompt, timeout):
+            captured["system_prompt"] = system_prompt
+            return "Translated output"
+
+        with (
+            patch("cleanup_v2._try_groq", side_effect=fake_groq),
+            patch(
+                "cleanup_v2.vocab_store.apply_sounds_like", side_effect=lambda x: x
+            ),
+        ):
+            result = cleanup_text(
+                "這是一段原始逐字稿內容", engine="groq", style="translate", target_language="法語"
+            )
+        assert result == "Translated output"
+        assert "法語" in captured["system_prompt"]
+        assert "術語表：" not in captured["system_prompt"]
+
+    def test_cleanup_text_translate_glossary_over_cap_truncated(self):
+        """Glossary entries beyond the cap are truncated, not rejected --
+        the request must still succeed."""
+        captured = {}
+
+        def fake_groq(raw, model, system_prompt, timeout):
+            captured["system_prompt"] = system_prompt
+            return "Translated output"
+
+        oversized_glossary = [f"term{i}" for i in range(TRANSLATE_GLOSSARY_MAX + 5)]
+        with (
+            patch("cleanup_v2._try_groq", side_effect=fake_groq),
+            patch(
+                "cleanup_v2.vocab_store.apply_sounds_like", side_effect=lambda x: x
+            ),
+        ):
+            result = cleanup_text(
+                "這是一段原始逐字稿內容",
+                engine="groq",
+                style="translate",
+                target_language="英語",
+                glossary=oversized_glossary,
+            )
+        assert result == "Translated output"
+        assert f"term{TRANSLATE_GLOSSARY_MAX - 1}" in captured["system_prompt"]
+        assert f"term{TRANSLATE_GLOSSARY_MAX}" not in captured["system_prompt"]
 
 
 class TestPrivacyLane:
