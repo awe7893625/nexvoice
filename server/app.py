@@ -407,6 +407,20 @@ async def api_cleanup(body: dict) -> dict:
         if isinstance(req_app_context, str) and req_app_context.strip()
         else None
     )
+    # target_language / glossary are only meaningful for style="translate";
+    # cleanup.cleanup_text() ignores them for every other style.
+    req_target_language = body.get("target_language")
+    eff_target_language = (
+        req_target_language.strip()
+        if isinstance(req_target_language, str) and req_target_language.strip()
+        else None
+    )
+    req_glossary = body.get("glossary")
+    eff_glossary = (
+        [g for g in req_glossary if isinstance(g, str) and g.strip()]
+        if isinstance(req_glossary, list)
+        else None
+    )
     # Privacy mode is an end-to-end guarantee: never send transcript text to
     # remote cleanup providers, and never use the private Tailscale helper.
     if settings.privacy_mode:
@@ -420,6 +434,8 @@ async def api_cleanup(body: dict) -> dict:
         engine=settings.cleanup_engine,
         nim_model=settings.cleanup_nim_model,
         app_context=eff_app_context,
+        target_language=eff_target_language,
+        glossary=eff_glossary,
     )
     return {"text": cleaned, "style": eff_style}
 
