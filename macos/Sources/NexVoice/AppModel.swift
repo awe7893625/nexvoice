@@ -40,6 +40,7 @@ final class AppModel: ObservableObject {
                 liveCaptionsEnabled: productPreferences.liveCaptionsEnabled,
                 subtitleStyle: productPreferences.subtitleStyle
             )
+            runtime.updateTranslateHotkeyProfile(productPreferences.translate)
         }
     }
     @Published var zeroCostMode: Bool {
@@ -74,6 +75,9 @@ final class AppModel: ObservableObject {
     @Published var notice: String?
     @Published private(set) var runtimeState: VoiceRuntimeState = .disabled
     @Published private(set) var lastTranscript = ""
+    @Published private(set) var lastOriginalTranscript = ""
+    @Published private(set) var lastTranslation: String?
+    @Published private(set) var lastTranslationFailed = false
     @Published private(set) var history: [HistoryEntry] = []
     @Published private(set) var vocab: [VocabEntry] = []
     /// Drives first-run / permission setup window.
@@ -153,10 +157,19 @@ final class AppModel: ObservableObject {
             liveCaptionsEnabled: productPreferences.liveCaptionsEnabled,
             subtitleStyle: productPreferences.subtitleStyle
         )
+        runtime.updateTranslateHotkeyProfile(productPreferences.translate)
         runtime.onStateChange = { [weak self] state in self?.runtimeState = state }
         runtime.onTranscript = { [weak self] text in
             self?.lastTranscript = text
             self?.reloadHistory()
+        }
+        runtime.onResult = { [weak self] result in
+            self?.lastOriginalTranscript = result.original
+            self?.lastTranslation = result.translation
+            self?.lastTranslationFailed = result.translationFailed
+        }
+        runtime.productPreferencesProvider = { [weak self] in
+            self?.productPreferences ?? ProductPreferences()
         }
         runtime.preferencesProvider = { [weak self] in
             guard let self else {
