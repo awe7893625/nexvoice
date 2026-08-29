@@ -42,6 +42,20 @@ enum TriggerKey: String, CaseIterable, Codable, Equatable, Sendable {
     case rightControl
     case function
 
+    /// Maps the key codes emitted by macOS for physical modifier keys.
+    init?(keyCode: UInt16) {
+        switch keyCode {
+        case 58: self = .leftOption
+        case 61: self = .rightOption
+        case 55: self = .leftCommand
+        case 54: self = .rightCommand
+        case 59: self = .leftControl
+        case 62: self = .rightControl
+        case 63: self = .function
+        default: return nil
+        }
+    }
+
     init(from decoder: Decoder) throws {
         let container = try decoder.singleValueContainer()
         let value = try container.decode(String.self)

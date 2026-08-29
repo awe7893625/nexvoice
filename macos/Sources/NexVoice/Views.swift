@@ -1493,8 +1493,20 @@ private struct HotkeyCaptureButton: View {
     @State private var capturing = false
 
     var body: some View {
-        Button(capturing ? "請按按鍵…" : (keyCode.map(HotkeyDisplay.name) ?? trigger.displayName)) {
-            capturing = true
+        Menu {
+            ForEach(TriggerKey.allCases, id: \.self) { option in
+                Button(option.displayName) {
+                    trigger = option
+                    keyCode = nil
+                    capturing = false
+                }
+            }
+            Divider()
+            Button("擷取實體鍵…") {
+                capturing = true
+            }
+        } label: {
+            Text(capturing ? "請按按鍵…" : (keyCode.map(HotkeyDisplay.name) ?? trigger.displayName))
         }
         .buttonStyle(NVSecondaryButton())
         .background(
@@ -1530,14 +1542,11 @@ private struct HotkeyCaptureField: NSViewRepresentable {
             keyCode = code
             isCapturing = false
         }
-        view.onFlags = { flags in
+        view.onFlags = { code in
             guard isCapturing else { return }
+            guard let capturedTrigger = TriggerKey(keyCode: code) else { return }
             keyCode = nil
-            if flags.contains(.option) { trigger = .option }
-            else if flags.contains(.command) { trigger = .leftCommand }
-            else if flags.contains(.control) { trigger = .leftControl }
-            else if flags.contains(.function) { trigger = .function }
-            else { return }
+            trigger = capturedTrigger
             isCapturing = false
         }
         return view
@@ -1549,12 +1558,12 @@ private struct HotkeyCaptureField: NSViewRepresentable {
 }
 
 private final class CaptureNSView: NSView {
-    var onFlags: ((NSEvent.ModifierFlags) -> Void)?
+    var onFlags: ((UInt16) -> Void)?
     var onKey: ((UInt16) -> Void)?
     override var acceptsFirstResponder: Bool { true }
     override func becomeFirstResponder() -> Bool { true }
     override func keyDown(with event: NSEvent) { onKey?(event.keyCode) }
-    override func flagsChanged(with event: NSEvent) { onFlags?(event.modifierFlags) }
+    override func flagsChanged(with event: NSEvent) { onFlags?(event.keyCode) }
 }
 
 private extension HotkeyOwner {

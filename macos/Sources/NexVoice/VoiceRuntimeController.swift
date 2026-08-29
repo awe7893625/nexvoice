@@ -1050,15 +1050,12 @@ private extension VoiceRuntimeState {
 
 private extension TriggerKey {
     func accepts(keyCode: UInt16) -> Bool {
+        guard let physicalKey = TriggerKey(keyCode: keyCode) else { return false }
         switch self {
-        case .option: keyCode == 58 || keyCode == 61
-        case .leftOption: keyCode == 58
-        case .rightOption: keyCode == 61
-        case .leftCommand: keyCode == 55
-        case .rightCommand: keyCode == 54
-        case .leftControl: keyCode == 59
-        case .rightControl: keyCode == 62
-        case .function: keyCode == 63
+        case .option:
+            return physicalKey == .leftOption || physicalKey == .rightOption
+        default:
+            return physicalKey == self
         }
     }
 
