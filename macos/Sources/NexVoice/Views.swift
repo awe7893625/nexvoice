@@ -267,7 +267,7 @@ private struct HomePage: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 pageTitle("首頁", subtitle: model.isEnabled
-                          ? model.hotkeyProfile.userInstruction
+                          ? model.productPreferences.dictate.userInstruction
                           : "與 Typeless 並存：一次只啟用一個語音工具")
 
                 if !model.permissionsReady {
@@ -337,7 +337,7 @@ private struct HomePage: View {
                 // fixedSize pins the row to the tallest card's intrinsic height
                 // so a two-line tip no longer leaves its neighbours short.
                 HStack(alignment: .top, spacing: 12) {
-                    tipCard(symbol: "mic.fill", title: "聽寫", text: model.hotkeyProfile.userInstruction)
+                    tipCard(symbol: "mic.fill", title: "聽寫", text: model.productPreferences.dictate.userInstruction)
                     tipCard(symbol: "xmark.circle", title: "取消", text: "Esc 或 HUD 上的 ✕")
                     tipCard(symbol: "doc.on.clipboard", title: "重貼", text: "⌥⌘V 重貼上一筆")
                 }
@@ -349,11 +349,11 @@ private struct HomePage: View {
                             .font(.system(size: 14, weight: .bold))
                             .foregroundStyle(NV.ink)
                         Spacer()
-                        Text(model.hotkeyProfile.bindingName)
+                        Text(model.productPreferences.dictate.bindingName)
                             .font(.system(size: 12, weight: .semibold, design: .rounded))
                             .foregroundStyle(NV.blue)
                     }
-                    Text(model.hotkeyProfile.behavior == .toggle
+                    Text(model.productPreferences.dictate.behavior == .toggle
                          ? "Toggle：按下開始，再按一下停止"
                          : "Push-to-talk：按住開始，放開立即停止並轉錄")
                         .font(.system(size: 12.5))
@@ -980,8 +980,8 @@ private struct SettingsPage: View {
                 detail: "點擊後直接按下 Option／Command／Control／Fn 設定",
                 trailing: {
                     let bindings = HotkeyProfile.makeHotkeyBindings(
-                        getProfile: { model.hotkeyProfile },
-                        setProfile: { model.hotkeyProfile = $0 }
+                        getProfile: { model.productPreferences.dictate },
+                        setProfile: { model.productPreferences.dictate = $0 }
                     )
                     HotkeyCaptureButton(trigger: bindings.trigger, keyCode: bindings.keyCode)
                 }
@@ -989,18 +989,14 @@ private struct SettingsPage: View {
             Divider().overlay(NV.hairline)
             settingsRow(
                 title: "操作方式",
-                detail: model.hotkeyProfile.behavior == .toggle
+                detail: model.productPreferences.dictate.behavior == .toggle
                     ? "按一下開始，再按一下停止"
                     : "按住錄音，放開後停止並轉錄",
                 trailing: {
                     Picker("操作方式", selection: Binding(
-                        get: { model.hotkeyProfile.behavior },
+                        get: { model.productPreferences.dictate.behavior },
                         set: { behavior in
-                            model.hotkeyProfile = HotkeyProfile(
-                                trigger: model.hotkeyProfile.trigger,
-                                behavior: behavior,
-                                keyCode: model.hotkeyProfile.keyCode
-                            )
+                            model.productPreferences.dictate = model.productPreferences.dictate.with(behavior: behavior)
                         }
                     )) {
                         ForEach(TriggerBehavior.allCases, id: \.self) { behavior in
@@ -1018,8 +1014,6 @@ private struct SettingsPage: View {
     private var modeHotkeysCard: some View {
         VStack(alignment: .leading, spacing: 0) {
             cardHeader("快捷鍵模式", "每個模式可綁不同按鍵與觸發方式")
-            modeHotkeyRow(.dictate, title: "聽寫", detail: "按下開始／停止並貼上")
-            Divider().overlay(NV.hairline)
             modeHotkeyRow(.translate, title: "翻譯", detail: "按下開始／停止翻譯到目標語言")
             Divider().overlay(NV.hairline)
             modeHotkeyRow(.ask, title: "隨便問", detail: "按下開始／停止，回答目前問題")
