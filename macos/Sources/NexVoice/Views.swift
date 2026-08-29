@@ -982,20 +982,12 @@ private struct SettingsPage: View {
                     HotkeyCaptureButton(trigger: Binding(
                         get: { model.hotkeyProfile.trigger },
                         set: { trigger in
-                            model.hotkeyProfile = HotkeyProfile(
-                                trigger: trigger,
-                                behavior: model.hotkeyProfile.behavior,
-                                keyCode: nil
-                            )
+                            model.hotkeyProfile = model.hotkeyProfile.with(trigger: trigger)
                         }
                     ), keyCode: Binding(
                         get: { model.hotkeyProfile.keyCode },
                         set: { code in
-                            model.hotkeyProfile = HotkeyProfile(
-                                trigger: model.hotkeyProfile.trigger,
-                                behavior: model.hotkeyProfile.behavior,
-                                keyCode: code
-                            )
+                            model.hotkeyProfile = model.hotkeyProfile.with(keyCode: code)
                         }
                     ))
                 }
@@ -1413,8 +1405,7 @@ private struct SettingsPage: View {
 
     @ViewBuilder
     private func modeHotkeyRow(_ mode: VoiceMode, title: String, detail: String) -> some View {
-        let profile = mode == .dictate ? model.productPreferences.dictate
-            : mode == .translate ? model.productPreferences.translate : model.productPreferences.ask
+        let profile = modeProfile(mode)
         HStack(alignment: .center, spacing: 12) {
             VStack(alignment: .leading, spacing: 3) {
                 Text(title).font(.system(size: 13.5, weight: .semibold)).foregroundStyle(NV.ink)
@@ -1425,13 +1416,11 @@ private struct SettingsPage: View {
             Spacer()
             VStack(alignment: .trailing, spacing: 5) {
                 HotkeyCaptureButton(
-                    trigger: Binding(get: { profile.trigger }, set: { newTrigger in
-                        var next = profile; next = HotkeyProfile(trigger: newTrigger, behavior: next.behavior)
-                        setModeProfile(mode, next)
+                    trigger: Binding(get: { modeProfile(mode).trigger }, set: { newTrigger in
+                        setModeProfile(mode, modeProfile(mode).with(trigger: newTrigger))
                     }),
-                    keyCode: Binding(get: { profile.keyCode }, set: { code in
-                        let next = HotkeyProfile(trigger: profile.trigger, behavior: profile.behavior, keyCode: code)
-                        setModeProfile(mode, next)
+                    keyCode: Binding(get: { modeProfile(mode).keyCode }, set: { code in
+                        setModeProfile(mode, modeProfile(mode).with(keyCode: code))
                     })
                 )
                 Picker("模式", selection: Binding(get: { profile.behavior }, set: { behavior in
@@ -1442,6 +1431,14 @@ private struct SettingsPage: View {
             }
         }
         .padding(.vertical, 12)
+    }
+
+    private func modeProfile(_ mode: VoiceMode) -> HotkeyProfile {
+        switch mode {
+        case .dictate: model.productPreferences.dictate
+        case .translate: model.productPreferences.translate
+        case .ask: model.productPreferences.ask
+        }
     }
 
     private func setModeProfile(_ mode: VoiceMode, _ profile: HotkeyProfile) {
@@ -1497,7 +1494,6 @@ private struct HotkeyCaptureButton: View {
             ForEach(TriggerKey.allCases, id: \.self) { option in
                 Button(option.displayName) {
                     trigger = option
-                    keyCode = nil
                     capturing = false
                 }
             }

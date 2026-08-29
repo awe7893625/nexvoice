@@ -110,6 +110,26 @@ struct HotkeyProfile: Codable, Equatable, Sendable {
         self.keyCode = keyCode
     }
 
+    /// Returns a modifier-mode profile for the selected physical trigger.
+    func with(trigger: TriggerKey) -> HotkeyProfile {
+        HotkeyProfile(
+            trigger: trigger,
+            behavior: behavior,
+            keyCode: nil,
+            schemaVersion: schemaVersion
+        )
+    }
+
+    /// Returns a custom-key-mode profile while preserving the selected trigger.
+    func with(keyCode: UInt16?) -> HotkeyProfile {
+        HotkeyProfile(
+            trigger: trigger,
+            behavior: behavior,
+            keyCode: keyCode,
+            schemaVersion: schemaVersion
+        )
+    }
+
     private enum CodingKeys: String, CodingKey {
         case schemaVersion
         case version
@@ -137,6 +157,18 @@ struct HotkeyProfile: Codable, Equatable, Sendable {
         try container.encode(trigger, forKey: .trigger)
         try container.encode(behavior, forKey: .behavior)
         try container.encodeIfPresent(keyCode, forKey: .keyCode)
+    }
+}
+
+extension TriggerKey {
+    func accepts(keyCode: UInt16) -> Bool {
+        guard let physicalKey = TriggerKey(keyCode: keyCode) else { return false }
+        switch self {
+        case .option:
+            return physicalKey == .leftOption || physicalKey == .rightOption
+        default:
+            return physicalKey == self
+        }
     }
 }
 
