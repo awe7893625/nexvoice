@@ -1049,19 +1049,6 @@ private extension VoiceRuntimeState {
 }
 
 private extension TriggerKey {
-    func accepts(keyCode: UInt16) -> Bool {
-        switch self {
-        case .option: keyCode == 58 || keyCode == 61
-        case .leftOption: keyCode == 58
-        case .rightOption: keyCode == 61
-        case .leftCommand: keyCode == 55
-        case .rightCommand: keyCode == 54
-        case .leftControl: keyCode == 59
-        case .rightControl: keyCode == 62
-        case .function: keyCode == 63
-        }
-    }
-
     var modifierFlag: NSEvent.ModifierFlags {
         switch self {
         case .option, .leftOption, .rightOption: .option

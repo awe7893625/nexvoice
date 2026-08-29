@@ -979,25 +979,11 @@ private struct SettingsPage: View {
                 title: "錄音按鍵",
                 detail: "點擊後直接按下 Option／Command／Control／Fn 設定",
                 trailing: {
-                    HotkeyCaptureButton(trigger: Binding(
-                        get: { model.hotkeyProfile.trigger },
-                        set: { trigger in
-                            model.hotkeyProfile = HotkeyProfile(
-                                trigger: trigger,
-                                behavior: model.hotkeyProfile.behavior,
-                                keyCode: nil
-                            )
-                        }
-                    ), keyCode: Binding(
-                        get: { model.hotkeyProfile.keyCode },
-                        set: { code in
-                            model.hotkeyProfile = HotkeyProfile(
-                                trigger: model.hotkeyProfile.trigger,
-                                behavior: model.hotkeyProfile.behavior,
-                                keyCode: code
-                            )
-                        }
-                    ))
+                    let bindings = HotkeyProfile.makeHotkeyBindings(
+                        getProfile: { model.hotkeyProfile },
+                        setProfile: { model.hotkeyProfile = $0 }
+                    )
+                    HotkeyCaptureButton(trigger: bindings.trigger, keyCode: bindings.keyCode)
                 }
             )
             Divider().overlay(NV.hairline)
@@ -1413,8 +1399,11 @@ private struct SettingsPage: View {
 
     @ViewBuilder
     private func modeHotkeyRow(_ mode: VoiceMode, title: String, detail: String) -> some View {
-        let profile = mode == .dictate ? model.productPreferences.dictate
-            : mode == .translate ? model.productPreferences.translate : model.productPreferences.ask
+        let profile = modeProfile(mode)
+        let bindings = HotkeyProfile.makeHotkeyBindings(
+            getProfile: { modeProfile(mode) },
+            setProfile: { setModeProfile(mode, $0) }
+        )
         HStack(alignment: .center, spacing: 12) {
             VStack(alignment: .leading, spacing: 3) {
                 Text(title).font(.system(size: 13.5, weight: .semibold)).foregroundStyle(NV.ink)
@@ -1425,14 +1414,8 @@ private struct SettingsPage: View {
             Spacer()
             VStack(alignment: .trailing, spacing: 5) {
                 HotkeyCaptureButton(
-                    trigger: Binding(get: { profile.trigger }, set: { newTrigger in
-                        var next = profile; next = HotkeyProfile(trigger: newTrigger, behavior: next.behavior)
-                        setModeProfile(mode, next)
-                    }),
-                    keyCode: Binding(get: { profile.keyCode }, set: { code in
-                        let next = HotkeyProfile(trigger: profile.trigger, behavior: profile.behavior, keyCode: code)
-                        setModeProfile(mode, next)
-                    })
+                    trigger: bindings.trigger,
+                    keyCode: bindings.keyCode
                 )
                 Picker("模式", selection: Binding(get: { profile.behavior }, set: { behavior in
                     setModeProfile(mode, HotkeyProfile(trigger: profile.trigger, behavior: behavior, keyCode: profile.keyCode))
@@ -1442,6 +1425,14 @@ private struct SettingsPage: View {
             }
         }
         .padding(.vertical, 12)
+    }
+
+    private func modeProfile(_ mode: VoiceMode) -> HotkeyProfile {
+        switch mode {
+        case .dictate: model.productPreferences.dictate
+        case .translate: model.productPreferences.translate
+        case .ask: model.productPreferences.ask
+        }
     }
 
     private func setModeProfile(_ mode: VoiceMode, _ profile: HotkeyProfile) {
@@ -1493,8 +1484,19 @@ private struct HotkeyCaptureButton: View {
     @State private var capturing = false
 
     var body: some View {
-        Button(capturing ? "請按按鍵…" : (keyCode.map(HotkeyDisplay.name) ?? trigger.displayName)) {
-            capturing = true
+        Menu {
+            ForEach(TriggerKey.allCases, id: \.self) { option in
+                Button(option.displayName) {
+                    trigger = option
+                    capturing = false
+                }
+            }
+            Divider()
+            Button("擷取實體鍵…") {
+                capturing = true
+            }
+        } label: {
+            Text(capturing ? "請按按鍵…" : (keyCode.map(HotkeyDisplay.name) ?? trigger.displayName))
         }
         .buttonStyle(NVSecondaryButton())
         .background(
@@ -1530,14 +1532,11 @@ private struct HotkeyCaptureField: NSViewRepresentable {
             keyCode = code
             isCapturing = false
         }
-        view.onFlags = { flags in
+        view.onFlags = { code in
             guard isCapturing else { return }
+            guard let capturedTrigger = TriggerKey(keyCode: code) else { return }
             keyCode = nil
-            if flags.contains(.option) { trigger = .option }
-            else if flags.contains(.command) { trigger = .leftCommand }
-            else if flags.contains(.control) { trigger = .leftControl }
-            else if flags.contains(.function) { trigger = .function }
-            else { return }
+            trigger = capturedTrigger
             isCapturing = false
         }
         return view
@@ -1549,12 +1548,12 @@ private struct HotkeyCaptureField: NSViewRepresentable {
 }
 
 private final class CaptureNSView: NSView {
-    var onFlags: ((NSEvent.ModifierFlags) -> Void)?
+    var onFlags: ((UInt16) -> Void)?
     var onKey: ((UInt16) -> Void)?
     override var acceptsFirstResponder: Bool { true }
     override func becomeFirstResponder() -> Bool { true }
     override func keyDown(with event: NSEvent) { onKey?(event.keyCode) }
-    override func flagsChanged(with event: NSEvent) { onFlags?(event.modifierFlags) }
+    override func flagsChanged(with event: NSEvent) { onFlags?(event.keyCode) }
 }
 
 private extension HotkeyOwner {

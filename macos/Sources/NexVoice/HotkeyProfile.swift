@@ -1,4 +1,5 @@
 import Foundation
+import SwiftUI
 
 /// What a complete trigger gesture means to the recording state machine.
 enum TriggerBehavior: String, CaseIterable, Codable, Equatable, Sendable {
@@ -41,6 +42,20 @@ enum TriggerKey: String, CaseIterable, Codable, Equatable, Sendable {
     case leftControl
     case rightControl
     case function
+
+    /// Maps the key codes emitted by macOS for physical modifier keys.
+    init?(keyCode: UInt16) {
+        switch keyCode {
+        case 58: self = .leftOption
+        case 61: self = .rightOption
+        case 55: self = .leftCommand
+        case 54: self = .rightCommand
+        case 59: self = .leftControl
+        case 62: self = .rightControl
+        case 63: self = .function
+        default: return nil
+        }
+    }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.singleValueContainer()
@@ -96,6 +111,46 @@ struct HotkeyProfile: Codable, Equatable, Sendable {
         self.keyCode = keyCode
     }
 
+    /// Returns a modifier-mode profile for the selected physical trigger.
+    func with(trigger: TriggerKey) -> HotkeyProfile {
+        HotkeyProfile(
+            trigger: trigger,
+            behavior: behavior,
+            keyCode: nil,
+            schemaVersion: schemaVersion
+        )
+    }
+
+    /// Returns a custom-key-mode profile while preserving the selected trigger.
+    func with(keyCode: UInt16?) -> HotkeyProfile {
+        HotkeyProfile(
+            trigger: trigger,
+            behavior: behavior,
+            keyCode: keyCode,
+            schemaVersion: schemaVersion
+        )
+    }
+
+    static func makeHotkeyBindings(
+        getProfile: @escaping () -> HotkeyProfile,
+        setProfile: @escaping (HotkeyProfile) -> Void
+    ) -> (trigger: Binding<TriggerKey>, keyCode: Binding<UInt16?>) {
+        (
+            trigger: Binding(
+                get: { getProfile().trigger },
+                set: { trigger in
+                    setProfile(getProfile().with(trigger: trigger))
+                }
+            ),
+            keyCode: Binding(
+                get: { getProfile().keyCode },
+                set: { keyCode in
+                    setProfile(getProfile().with(keyCode: keyCode))
+                }
+            )
+        )
+    }
+
     private enum CodingKeys: String, CodingKey {
         case schemaVersion
         case version
@@ -123,6 +178,18 @@ struct HotkeyProfile: Codable, Equatable, Sendable {
         try container.encode(trigger, forKey: .trigger)
         try container.encode(behavior, forKey: .behavior)
         try container.encodeIfPresent(keyCode, forKey: .keyCode)
+    }
+}
+
+extension TriggerKey {
+    func accepts(keyCode: UInt16) -> Bool {
+        guard let physicalKey = TriggerKey(keyCode: keyCode) else { return false }
+        switch self {
+        case .option:
+            return physicalKey == .leftOption || physicalKey == .rightOption
+        default:
+            return physicalKey == self
+        }
     }
 }
 
