@@ -979,17 +979,11 @@ private struct SettingsPage: View {
                 title: "錄音按鍵",
                 detail: "點擊後直接按下 Option／Command／Control／Fn 設定",
                 trailing: {
-                    HotkeyCaptureButton(trigger: Binding(
-                        get: { model.hotkeyProfile.trigger },
-                        set: { trigger in
-                            model.hotkeyProfile = model.hotkeyProfile.with(trigger: trigger)
-                        }
-                    ), keyCode: Binding(
-                        get: { model.hotkeyProfile.keyCode },
-                        set: { code in
-                            model.hotkeyProfile = model.hotkeyProfile.with(keyCode: code)
-                        }
-                    ))
+                    let bindings = HotkeyProfile.makeHotkeyBindings(
+                        getProfile: { model.hotkeyProfile },
+                        setProfile: { model.hotkeyProfile = $0 }
+                    )
+                    HotkeyCaptureButton(trigger: bindings.trigger, keyCode: bindings.keyCode)
                 }
             )
             Divider().overlay(NV.hairline)
@@ -1406,6 +1400,10 @@ private struct SettingsPage: View {
     @ViewBuilder
     private func modeHotkeyRow(_ mode: VoiceMode, title: String, detail: String) -> some View {
         let profile = modeProfile(mode)
+        let bindings = HotkeyProfile.makeHotkeyBindings(
+            getProfile: { modeProfile(mode) },
+            setProfile: { setModeProfile(mode, $0) }
+        )
         HStack(alignment: .center, spacing: 12) {
             VStack(alignment: .leading, spacing: 3) {
                 Text(title).font(.system(size: 13.5, weight: .semibold)).foregroundStyle(NV.ink)
@@ -1416,12 +1414,8 @@ private struct SettingsPage: View {
             Spacer()
             VStack(alignment: .trailing, spacing: 5) {
                 HotkeyCaptureButton(
-                    trigger: Binding(get: { modeProfile(mode).trigger }, set: { newTrigger in
-                        setModeProfile(mode, modeProfile(mode).with(trigger: newTrigger))
-                    }),
-                    keyCode: Binding(get: { modeProfile(mode).keyCode }, set: { code in
-                        setModeProfile(mode, modeProfile(mode).with(keyCode: code))
-                    })
+                    trigger: bindings.trigger,
+                    keyCode: bindings.keyCode
                 )
                 Picker("模式", selection: Binding(get: { profile.behavior }, set: { behavior in
                     setModeProfile(mode, HotkeyProfile(trigger: profile.trigger, behavior: behavior, keyCode: profile.keyCode))

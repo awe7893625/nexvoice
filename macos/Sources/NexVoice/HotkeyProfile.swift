@@ -1,4 +1,5 @@
 import Foundation
+import SwiftUI
 
 /// What a complete trigger gesture means to the recording state machine.
 enum TriggerBehavior: String, CaseIterable, Codable, Equatable, Sendable {
@@ -127,6 +128,26 @@ struct HotkeyProfile: Codable, Equatable, Sendable {
             behavior: behavior,
             keyCode: keyCode,
             schemaVersion: schemaVersion
+        )
+    }
+
+    static func makeHotkeyBindings(
+        getProfile: @escaping () -> HotkeyProfile,
+        setProfile: @escaping (HotkeyProfile) -> Void
+    ) -> (trigger: Binding<TriggerKey>, keyCode: Binding<UInt16?>) {
+        (
+            trigger: Binding(
+                get: { getProfile().trigger },
+                set: { trigger in
+                    setProfile(getProfile().with(trigger: trigger))
+                }
+            ),
+            keyCode: Binding(
+                get: { getProfile().keyCode },
+                set: { keyCode in
+                    setProfile(getProfile().with(keyCode: keyCode))
+                }
+            )
         )
     }
 
