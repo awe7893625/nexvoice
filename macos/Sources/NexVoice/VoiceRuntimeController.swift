@@ -363,7 +363,16 @@ final class VoiceRuntimeController {
         _ event: NSEvent,
         mode: VoiceMode
     ) -> Bool {
-        var engine = mode == .translate ? translateHotkeyEngine : hotkeyEngine
+        // 票E 熱修：引擎選擇必須 exhaustive。原三元運算子讓 .ask 落入 dictate
+        // 引擎，右 Option 事件被 ask 與 dictate 兩條路徑重複處理，struct 引擎
+        // 各自寫回後狀態機錯亂（Option 全滅、Cmd 正常）。switch 保證新模式
+        // 忘了接引擎時編譯期就失敗。
+        var engine: HotkeyGestureEngine
+        switch mode {
+        case .translate: engine = translateHotkeyEngine
+        case .ask: engine = askHotkeyEngine
+        case .dictate: engine = hotkeyEngine
+        }
         if event.type == .flagsChanged,
            engine.triggerIsDown,
            !engine.profile.trigger.accepts(keyCode: event.keyCode),
