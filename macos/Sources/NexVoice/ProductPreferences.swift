@@ -217,11 +217,42 @@ struct ProductPreferences: Codable, Equatable, Sendable {
 enum ProductPreferencesStore {
     private static let key = "nexvoice.product.preferences"
     static func load(_ defaults: UserDefaults = .standard) -> ProductPreferences {
-        guard let data = defaults.data(forKey: key),
-              let value = try? JSONDecoder().decode(ProductPreferences.self, from: data)
-        else { return ProductPreferences() }
-        return value
+        if let data = defaults.data(forKey: key),
+           let value = try? JSONDecoder().decode(ProductPreferences.self, from: data) {
+            return value
+        }
+        // 型別防禦（真實事故 2026-08-29）：blob 若被外部寫成字串而非 Data，
+        // data(forKey:) 會回 nil 並靜默丟掉使用者全部設定；字串型別也要能讀回。
+        if let raw = defaults.string(forKey: key),
+           let data = raw.data(using: .utf8),
+           let value = try? JSONDecoder().decode(ProductPreferences.self, from: data) {
+            return value
+        }
+        return ProductPreferences()
     }
+
+    /// 票E（2026-08-30）：三個模式熱鍵以 ProductPreferences 為唯一來源（SSOT）。
+    /// 舊版主要觸發鍵存在 HotkeyProfileStore（"nexvoice.hotkey.profile"），載入時
+    /// 一次性搬進 .dictate 並落盤；之後該 key 不再被讀寫（舊檔保留不刪）。
+    /// 舊值優先於 blob：歷史上它才是引擎真正使用的設定，blob 的 dictate 列是死的。
+    /// marker 保證遷移只跑一次——否則使用者遷移後在 UI 改鍵，下次啟動會被
+    /// 留在磁碟上的舊值蓋回去。
+    static func resolvingLegacyRecordKey(_ defaults: UserDefaults = .standard) -> ProductPreferences {
+        if defaults.bool(forKey: legacyMigrationDoneKey) { return load(defaults) }
+        defaults.set(true, forKey: legacyMigrationDoneKey)
+        var prefs = load(defaults)
+        let store = HotkeyProfileStore(defaults: defaults)
+        guard store.hasStoredProfile() else { return prefs }
+        let legacy = store.load()
+        if prefs.dictate != legacy {
+            prefs.dictate = legacy
+            save(prefs, defaults)
+        }
+        return prefs
+    }
+
+    private static let legacyMigrationDoneKey = "nexvoice.hotkey.legacyMigrated"
+
     static func save(_ value: ProductPreferences, _ defaults: UserDefaults = .standard) {
         if let data = try? JSONEncoder().encode(value) { defaults.set(data, forKey: key) }
     }

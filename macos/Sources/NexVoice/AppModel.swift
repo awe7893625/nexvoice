@@ -40,7 +40,10 @@ final class AppModel: ObservableObject {
                 liveCaptionsEnabled: productPreferences.liveCaptionsEnabled,
                 subtitleStyle: productPreferences.subtitleStyle
             )
+            // 票E：三個模式熱鍵都從 productPreferences 同步到引擎（SSOT）。
+            runtime.updateHotkeyProfile(productPreferences.dictate)
             runtime.updateTranslateHotkeyProfile(productPreferences.translate)
+            runtime.updateAskHotkeyProfile(productPreferences.ask)
         }
     }
     @Published var zeroCostMode: Bool {
@@ -49,16 +52,6 @@ final class AppModel: ObservableObject {
             if zeroCostMode {
                 cloudFallbackEnabled = false
                 cleanupEnabled = false
-            }
-        }
-    }
-    @Published var hotkeyProfile: HotkeyProfile {
-        didSet {
-            do {
-                try hotkeyStore.save(hotkeyProfile)
-                runtime.updateHotkeyProfile(hotkeyProfile)
-            } catch {
-                notice = "快捷鍵設定無法儲存，已保留目前設定。"
             }
         }
     }
@@ -98,7 +91,6 @@ final class AppModel: ObservableObject {
 
     private let defaults: UserDefaults
     private let runtime: VoiceRuntimeController
-    private let hotkeyStore: HotkeyProfileStore
     private var monitorTask: Task<Void, Never>?
     private var typelessWatchTask: Task<Void, Never>?
     private let localRuntimeSupervisor = LocalRuntimeSupervisor()
@@ -119,9 +111,6 @@ final class AppModel: ObservableObject {
         // handoff belongs solely to VoiceRuntimeController.enable()/disable(),
         // which only run when native actually takes over.
         self.defaults = defaults
-        let hotkeyStore = HotkeyProfileStore(defaults: defaults)
-        self.hotkeyStore = hotkeyStore
-        self.hotkeyProfile = hotkeyStore.load()
         self.currentHotkeyOwner = LegacyBridge.loadOwner() ?? .legacy
         self.isEnabled = defaults.bool(forKey: Keys.enabled)
         self.privacyMode = defaults.bool(forKey: Keys.privacyMode)
@@ -146,11 +135,11 @@ final class AppModel: ObservableObject {
             ?? LocalRuntimeConfiguration.defaultModel
         self.localEndpoint = defaults.string(forKey: LocalRuntimeConfiguration.endpointKey)
             ?? LocalRuntimeConfiguration.defaultEndpoint
-        let loadedPreferences = ProductPreferencesStore.load(defaults)
+        let loadedPreferences = ProductPreferencesStore.resolvingLegacyRecordKey(defaults)
         self.productPreferences = loadedPreferences
         NV.theme = loadedPreferences.appTheme
         self.runtime = VoiceRuntimeController()
-        runtime.updateHotkeyProfile(hotkeyProfile)
+        runtime.updateHotkeyProfile(productPreferences.dictate)
         runtime.updateHUDPreferences(
             style: productPreferences.hudStyle,
             chrome: productPreferences.hudChrome,
@@ -158,6 +147,7 @@ final class AppModel: ObservableObject {
             subtitleStyle: productPreferences.subtitleStyle
         )
         runtime.updateTranslateHotkeyProfile(productPreferences.translate)
+        runtime.updateAskHotkeyProfile(productPreferences.ask)
         runtime.onStateChange = { [weak self] state in self?.runtimeState = state }
         runtime.onTranscript = { [weak self] text in
             self?.lastTranscript = text
@@ -562,7 +552,7 @@ final class AppModel: ObservableObject {
 
         await setRuntimeEnabled(true)
         if isEnabled {
-            notice = "NexVoice 已啟用。\(hotkeyProfile.userInstruction)"
+            notice = "NexVoice 已啟用。\(productPreferences.dictate.userInstruction)"
         } else if terminatedTypelessForSwitch {
             await performSwitchToTypeless()
             if typelessRunning {
@@ -645,7 +635,7 @@ final class AppModel: ObservableObject {
                 // Global Option monitor silently receives nothing without Accessibility —
                 // say so instead of claiming the hotkey works when it can't.
                 if accessibilityGranted {
-                    notice = "NexVoice 已接管快捷鍵；\(hotkeyProfile.userInstruction) ⌥⌘V 重貼 · ⌥⌘D 派工草稿。"
+                    notice = "NexVoice 已接管快捷鍵；\(productPreferences.dictate.userInstruction) ⌥⌘V 重貼 · ⌥⌘D 派工草稿。"
                 } else {
                     notice = "熱鍵未就緒：尚未取得輔助使用權限。請在系統設定將 NexVoice 關閉後再開啟一次。"
                 }

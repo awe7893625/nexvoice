@@ -92,6 +92,9 @@ final class VoiceRuntimeController {
     private var translateHotkeyEngine = HotkeyGestureEngine(
         profile: HotkeyProfile(trigger: .leftCommand, behavior: .toggle)
     )
+    private var askHotkeyEngine = HotkeyGestureEngine(
+        profile: HotkeyProfile(trigger: .function, behavior: .toggle)
+    )
     private var pendingHotkeyProfile: HotkeyProfile?
     private var ownershipGeneration = 0
     private var desiredOwner: HotkeyOwner = .legacy
@@ -131,6 +134,12 @@ final class VoiceRuntimeController {
         guard state == .disabled || state == .idle || state.isTerminal else { return }
         translateHotkeyEngine.setProfile(profile)
         DiagnosticLog.log("translate hotkey profile applied: \(profile.trigger.rawValue)/\(profile.behavior.rawValue)")
+    }
+
+    func updateAskHotkeyProfile(_ profile: HotkeyProfile) {
+        guard state == .disabled || state == .idle || state.isTerminal else { return }
+        askHotkeyEngine.setProfile(profile)
+        DiagnosticLog.log("ask hotkey profile applied: \(profile.trigger.rawValue)/\(profile.behavior.rawValue)")
     }
 
     init() {
@@ -335,14 +344,18 @@ final class VoiceRuntimeController {
                 dispatchLastDraft()
                 return
             }
-            if hotkeyEngine.profile.keyCode != nil || translateHotkeyEngine.profile.keyCode != nil {
+            if hotkeyEngine.profile.keyCode != nil
+                || translateHotkeyEngine.profile.keyCode != nil
+                || askHotkeyEngine.profile.keyCode != nil {
                 if processHotkey(event, mode: .translate) { return }
+                if processHotkey(event, mode: .ask) { return }
                 _ = processHotkey(event, mode: .dictate)
             }
             return
         }
 
         if processHotkey(event, mode: .translate) { return }
+        if processHotkey(event, mode: .ask) { return }
         _ = processHotkey(event, mode: .dictate)
     }
 
@@ -390,7 +403,8 @@ final class VoiceRuntimeController {
     private func setHotkeyEngine(_ engine: HotkeyGestureEngine, for mode: VoiceMode) {
         switch mode {
         case .translate: translateHotkeyEngine = engine
-        case .dictate, .ask: hotkeyEngine = engine
+        case .ask: askHotkeyEngine = engine
+        case .dictate: hotkeyEngine = engine
         }
     }
 

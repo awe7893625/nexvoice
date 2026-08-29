@@ -121,6 +121,16 @@ struct HotkeyProfile: Codable, Equatable, Sendable {
         )
     }
 
+    /// Returns the same trigger with a different gesture behavior.
+    func with(behavior: TriggerBehavior) -> HotkeyProfile {
+        HotkeyProfile(
+            trigger: trigger,
+            behavior: behavior,
+            keyCode: keyCode,
+            schemaVersion: schemaVersion
+        )
+    }
+
     /// Returns a custom-key-mode profile while preserving the selected trigger.
     func with(keyCode: UInt16?) -> HotkeyProfile {
         HotkeyProfile(
@@ -238,6 +248,14 @@ struct HotkeyProfileStore {
         }
 
         return .defaultProfile
+    }
+
+    /// 票E 遷移判準：使用者是否真的存過主要觸發鍵（profile blob 或舊 scalar key）。
+    /// load() 對空值回 .defaultProfile 無法區分「沒設過」與「設過但壞了」，遷移
+    /// 只能在確認存過時執行，否則會用預設值蓋掉使用者已遷移的設定。
+    func hasStoredProfile() -> Bool {
+        if defaults.data(forKey: Self.profileKey) != nil { return true }
+        return LegacyKey.triggers.contains { defaults.string(forKey: $0) != nil }
     }
 
     func save(_ profile: HotkeyProfile) throws {
