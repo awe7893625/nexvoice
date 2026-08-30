@@ -112,6 +112,17 @@ class TestVad:
         with patch.dict(os.environ, {"NEXVOICE_VAD": "1"}):
             assert runtime._trim_wav_for_vad(tone) == b""
 
+    def test_silero_can_be_forced_off_before_session_creation(self):
+        with patch.object(runtime, "_VAD_TIER", None), patch.object(
+            runtime, "_SILERO_SESSION", None
+        ), patch.object(runtime, "_SILERO_UNAVAILABLE", False), patch.object(
+            runtime, "_SILERO_ENABLED", None
+        ), patch.dict(
+            os.environ, {"NEXVOICE_VAD_SILERO": "0"}
+        ):
+            assert runtime._silero_session() is None
+            assert runtime._select_vad_tier() == "numpy"
+
     def test_tier_selection_contract(self):
         # numpy is the always-available floor (pure numpy, no model); silero is
         # auto-selected exactly when its onnxruntime backend and pinned model
@@ -121,4 +132,7 @@ class TestVad:
         assert tier in {"numpy", "silero"}
         if tier == "silero":
             assert runtime._silero_session() is not None
+            with patch.object(runtime, "_silero_vad", wraps=runtime._silero_vad) as silero_vad:
+                runtime._vad_bounds(samples, 16000)
+                assert silero_vad.called
         assert runtime._numpy_vad(samples, 16000)[0]

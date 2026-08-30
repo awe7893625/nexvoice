@@ -26,8 +26,10 @@ import sys
 import tempfile
 import wave
 from pathlib import Path
+from unittest.mock import patch
 
 import numpy as np
+import pytest
 
 RUNTIME_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(RUNTIME_DIR))
@@ -81,11 +83,129 @@ def synth_say(text: str, voice: str, workdir: Path) -> Path:
 
 
 def silero_available() -> bool:
-    """Probe the tier without mutating the process-wide session cache."""
+    """Probe the tier after resetting its process-wide test state."""
     rt._VAD_TIER = None
     rt._SILERO_SESSION = None
     rt._SILERO_UNAVAILABLE = False
+    rt._SILERO_ENABLED = None
     return rt._silero_session() is not None
+
+
+class FakeSileroSession:
+    def __init__(self, probabilities: list[float], error: Exception | None = None):
+        self.probabilities = probabilities
+        self.error = error
+        self.calls: list[dict[str, np.ndarray]] = []
+
+    def run(self, _outputs, feeds):
+        self.calls.append({
+            "input": feeds["input"].copy(),
+            "state": feeds["state"].copy(),
+            "sr": feeds["sr"].copy(),
+        })
+        if self.error is not None:
+            raise self.error
+        probability = self.probabilities[len(self.calls) - 1]
+        return (
+            np.asarray([[probability]], dtype=np.float32),
+            feeds["state"] + 1.0,
+        )
+
+
+def install_fake_session(monkeypatch, session: FakeSileroSession) -> None:
+    monkeypatch.setattr(rt, "_VAD_TIER", "silero")
+    monkeypatch.setattr(rt, "_SILERO_SESSION", session)
+    monkeypatch.setattr(rt, "_SILERO_UNAVAILABLE", False)
+
+
+def test_silero_env_is_cached_at_first_use(monkeypatch):
+    session = FakeSileroSession([0.9])
+    monkeypatch.setattr(rt, "_VAD_TIER", None)
+    monkeypatch.setattr(rt, "_SILERO_ENABLED", None)
+    monkeypatch.setattr(rt, "_SILERO_SESSION", session)
+    monkeypatch.setattr(rt, "_SILERO_UNAVAILABLE", False)
+    monkeypatch.setenv("NEXVOICE_VAD_SILERO", "1")
+
+    assert rt._silero_session() is session
+    monkeypatch.setenv("NEXVOICE_VAD_SILERO", "0")
+    monkeypatch.setattr(rt, "_VAD_TIER", None)
+
+    assert rt._select_vad_tier() == "silero"
+
+
+def test_fake_session_dispatch_context_state_and_tail(monkeypatch):
+    samples = np.arange(3 * rt.SILERO_VAD_CHUNK + 17, dtype=np.float32)
+    session = FakeSileroSession([0.9, 0.9, 0.9, 0.9])
+    install_fake_session(monkeypatch, session)
+
+    with patch.object(rt, "_numpy_vad", side_effect=AssertionError("numpy fallback")):
+        result = rt._vad_bounds(samples, 16000)
+
+    assert result == (True, 0, len(samples))
+    assert len(session.calls) == 4
+    assert [call["input"].shape for call in session.calls] == [(1, 576)] * 4
+    np.testing.assert_array_equal(session.calls[0]["input"][0], np.concatenate([
+        np.zeros(rt.SILERO_VAD_CONTEXT, dtype=np.float32),
+        samples[:rt.SILERO_VAD_CHUNK],
+    ]))
+    np.testing.assert_array_equal(session.calls[1]["input"][0], np.concatenate([
+        samples[rt.SILERO_VAD_CHUNK - rt.SILERO_VAD_CONTEXT:rt.SILERO_VAD_CHUNK],
+        samples[rt.SILERO_VAD_CHUNK:2 * rt.SILERO_VAD_CHUNK],
+    ]))
+    np.testing.assert_array_equal(session.calls[2]["input"][0, :64], samples[960:1024])
+    np.testing.assert_array_equal(session.calls[3]["input"][0, :64], samples[1472:1536])
+    np.testing.assert_array_equal(session.calls[3]["input"][0, 64:81], samples[1536:])
+    assert np.all(session.calls[3]["input"][0, 81:] == 0)
+    np.testing.assert_array_equal(
+        session.calls[0]["state"], np.zeros((2, 1, 128), dtype=np.float32)
+    )
+    np.testing.assert_array_equal(session.calls[1]["state"], np.ones((2, 1, 128), dtype=np.float32))
+    np.testing.assert_array_equal(session.calls[2]["state"], np.full((2, 1, 128), 2.0))
+    np.testing.assert_array_equal(session.calls[3]["state"], np.full((2, 1, 128), 3.0))
+    assert all(int(call["sr"]) == 16000 for call in session.calls)
+
+
+def test_fake_session_threshold_and_min_frames_gate(monkeypatch):
+    samples = np.zeros(3 * rt.SILERO_VAD_CHUNK, dtype=np.float32)
+
+    below_threshold = FakeSileroSession([0.49, 0.5, 0.5])
+    install_fake_session(monkeypatch, below_threshold)
+    with patch.object(rt, "_numpy_vad", side_effect=AssertionError("numpy fallback")):
+        assert rt._vad_bounds(samples, 16000) == (False, 0, 0)
+
+    at_threshold = FakeSileroSession([0.5, 0.5, 0.5])
+    install_fake_session(monkeypatch, at_threshold)
+    with patch.object(rt, "_numpy_vad", side_effect=AssertionError("numpy fallback")):
+        assert rt._vad_bounds(samples, 16000) == (True, 0, len(samples))
+
+
+def test_fake_session_and_unsupported_rate_fall_back_to_numpy(monkeypatch):
+    samples = np.zeros(3 * rt.SILERO_VAD_CHUNK, dtype=np.float32)
+    expected = (True, 11, 22)
+
+    monkeypatch.setattr(rt, "_VAD_TIER", "silero")
+    with patch.object(rt, "_silero_session", return_value=None), patch.object(
+        rt, "_numpy_vad", return_value=expected
+    ) as numpy_vad:
+        assert rt._vad_bounds(samples, 16000) == expected
+        numpy_vad.assert_called_once_with(samples, 16000)
+
+    failing = FakeSileroSession([], error=RuntimeError("fake ONNX failure"))
+    install_fake_session(monkeypatch, failing)
+    with patch.object(rt, "_numpy_vad", return_value=expected) as numpy_vad:
+        assert rt._vad_bounds(samples, 16000) == expected
+        assert rt._SILERO_SESSION is None
+        assert rt._SILERO_UNAVAILABLE is True
+
+        # The broken session is negatively cached: the next clip falls back
+        # immediately without retrying session.run or emitting another VAD
+        # failure warning.
+        assert rt._vad_bounds(samples, 16000) == expected
+        assert len(failing.calls) == 1
+        assert numpy_vad.call_count == 2
+
+    with patch.object(rt, "_silero_session", side_effect=AssertionError("session acquired")):
+        assert rt._silero_vad(samples, 8000) is None
 
 
 def main() -> int:
@@ -175,6 +295,24 @@ def main() -> int:
             print(f"  - {line}")
         return 1
     return 0
+
+
+@pytest.mark.skipif(not silero_available(), reason="silero VAD session unavailable")
+def test_real_tts_matrix():
+    with tempfile.TemporaryDirectory(prefix="nexvoice-silero-tts-probe-") as tmp:
+        try:
+            # Precheck BOTH voices the matrix needs, so a missing Samantha
+            # skips instead of erroring mid-run.
+            for voice in ("Meijia", "Samantha"):
+                probe = synth_say(
+                    ZH_TEXT if voice == "Meijia" else EN_TEXT, voice, Path(tmp)
+                )
+                probe_samples, _ = read_wav(probe)
+                if not len(probe_samples):
+                    pytest.skip("macOS TTS returned an empty WAV")
+        except (OSError, subprocess.CalledProcessError, wave.Error) as exc:
+            pytest.skip(f"macOS TTS unavailable: {exc}")
+    assert main() == 0
 
 
 if __name__ == "__main__":
