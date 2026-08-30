@@ -60,6 +60,7 @@ SILERO_VAD_SHA256 = "1a153a22f4509e292a94e67d6f9b85e8deb25b4988682b7e174c65279d8
 SILERO_VAD_CHUNK = 512    # silero v5 contract @16 kHz
 SILERO_VAD_CONTEXT = 64   # trailing-context samples prepended to each chunk
 SILERO_SPEECH_THRESHOLD = 0.5
+SILERO_VAD_MAX_MODEL_BYTES = 16 * 1024 * 1024
 VAD_LOGGER = logging.getLogger(__name__)
 # Whisper's anti-repetition mechanism: when greedy (t=0) decoding fails the
 # compression-ratio check (the signature of a "可以看到，可以看到，…" loop),
@@ -438,6 +439,8 @@ def _numpy_vad(samples, sample_rate: int) -> tuple[bool, int, int]:
 
 _SILERO_SESSION = None
 _SILERO_UNAVAILABLE = False
+_SILERO_ENABLED: bool | None = None
+_SILERO_MODEL_LOCK = threading.Lock()
 
 
 def silero_model_path() -> Path:
@@ -446,38 +449,75 @@ def silero_model_path() -> Path:
     the process lifetime so a transcription burst never stalls on retries."""
     global _SILERO_UNAVAILABLE
     path = Path.home() / ".cache" / "nexvoice" / "models" / "silero-vad" / "silero_vad.onnx"
-    if _SILERO_UNAVAILABLE:
-        return path
-    try:
-        if path.exists() and hashlib.sha256(path.read_bytes()).hexdigest() == SILERO_VAD_SHA256:
+    # The lock serializes resolve+download within this process. Each process
+    # uses its own temporary file; sha256 verification before atomic rename
+    # lets cross-process races converge on the same verified final bytes.
+    with _SILERO_MODEL_LOCK:
+        if _SILERO_UNAVAILABLE:
             return path
-        path.parent.mkdir(parents=True, exist_ok=True)
-        import urllib.request
+        tmp_path = None
+        try:
+            if path.exists() and hashlib.sha256(path.read_bytes()).hexdigest() == SILERO_VAD_SHA256:
+                return path
+            path.parent.mkdir(parents=True, exist_ok=True)
+            import urllib.request
 
-        tmp = path.with_suffix(".onnx.tmp")
-        with urllib.request.urlopen(SILERO_VAD_MODEL_URL, timeout=30) as response:
-            tmp.write_bytes(response.read())
-        digest = hashlib.sha256(tmp.read_bytes()).hexdigest()
-        if digest != SILERO_VAD_SHA256:
-            tmp.unlink(missing_ok=True)
-            raise ValueError(f"silero VAD model sha256 mismatch: {digest}")
-        tmp.replace(path)
-    except Exception as exc:
-        _SILERO_UNAVAILABLE = True
-        VAD_LOGGER.warning(
-            "silero VAD model unavailable (%s: %s); VAD stays on the numpy energy gate",
-            type(exc).__name__, exc,
-        )
+            with tempfile.NamedTemporaryFile(
+                dir=path.parent,
+                prefix=f".{path.name}.",
+                suffix=".tmp",
+                delete=False,
+            ) as tmp_file:
+                tmp_path = Path(tmp_file.name)
+                with urllib.request.urlopen(SILERO_VAD_MODEL_URL, timeout=30) as response:
+                    model_bytes = response.read(SILERO_VAD_MAX_MODEL_BYTES + 1)
+                if len(model_bytes) > SILERO_VAD_MAX_MODEL_BYTES:
+                    raise ValueError(
+                        f"silero VAD model exceeds {SILERO_VAD_MAX_MODEL_BYTES} bytes"
+                    )
+                tmp_file.write(model_bytes)
+                tmp_file.flush()
+                os.fsync(tmp_file.fileno())
+            digest = hashlib.sha256(tmp_path.read_bytes()).hexdigest()
+            if digest != SILERO_VAD_SHA256:
+                raise ValueError(f"silero VAD model sha256 mismatch: {digest}")
+            tmp_path.replace(path)
+        except Exception as exc:
+            _SILERO_UNAVAILABLE = True
+            VAD_LOGGER.warning(
+                "silero VAD model unavailable (%s: %s); VAD stays on the numpy energy gate",
+                type(exc).__name__, exc,
+            )
+        finally:
+            if tmp_path is not None:
+                tmp_path.unlink(missing_ok=True)
     return path
 
 
+def _silero_enabled() -> bool:
+    global _SILERO_ENABLED
+    if _SILERO_ENABLED is None:
+        _SILERO_ENABLED = (
+            os.environ.get("NEXVOICE_VAD_SILERO", "auto").strip().casefold()
+            not in {"0", "false"}
+        )
+    return _SILERO_ENABLED
+
+
 def _silero_session():
-    """Lazily build the ONNX session, or None when the tier cannot run."""
+    """Lazily build the ONNX session, or None when the tier cannot run.
+
+    NEXVOICE_VAD_SILERO has process-start semantics: it is read when the
+    session is first constructed, and the resulting session is cached. It is
+    not a runtime toggle.
+    """
     global _SILERO_SESSION, _SILERO_UNAVAILABLE
+    if _SILERO_UNAVAILABLE:
+        return None
+    if not _silero_enabled():
+        return None
     if _SILERO_SESSION is not None:
         return _SILERO_SESSION
-    if os.environ.get("NEXVOICE_VAD_SILERO", "auto").strip().casefold() in {"0", "false"}:
-        return None
     try:
         import onnxruntime
 
@@ -508,16 +548,27 @@ def _silero_vad(samples, sample_rate: int) -> tuple[bool, int, int] | None:
     recurrent state threads through the whole clip."""
     import numpy as np
 
+    global _SILERO_SESSION, _SILERO_UNAVAILABLE
+
+    if sample_rate != 16000:
+        return None
     session = _silero_session()
-    if session is None or sample_rate != 16000:
+    if session is None:
         return None
     try:
         x = np.asarray(samples, dtype=np.float32)
         state = np.zeros((2, 1, 128), dtype=np.float32)
         context = np.zeros(SILERO_VAD_CONTEXT, dtype=np.float32)
         flags = []
-        for i in range(0, len(x) - SILERO_VAD_CHUNK + 1, SILERO_VAD_CHUNK):
-            chunk = np.concatenate([context, x[i:i + SILERO_VAD_CHUNK]])
+        for i in range(0, len(x), SILERO_VAD_CHUNK):
+            audio_chunk = x[i:i + SILERO_VAD_CHUNK]
+            if len(audio_chunk) < SILERO_VAD_CHUNK:
+                audio_chunk = np.pad(
+                    audio_chunk,
+                    (0, SILERO_VAD_CHUNK - len(audio_chunk)),
+                    mode="constant",
+                )
+            chunk = np.concatenate([context, audio_chunk])
             prob, state = session.run(
                 None,
                 {
@@ -532,8 +583,8 @@ def _silero_vad(samples, sample_rate: int) -> tuple[bool, int, int] | None:
         if not flags:
             return False, 0, 0
         speech = np.flatnonzero(flags)
-        # Same gate accounting as the energy tier: a handful of flagged frames
-        # must survive the minimum-speech duration before the clip counts.
+        # Same gate accounting as the energy tier: count flagged chunks across
+        # the whole clip, not a continuous speech duration.
         chunk_ms = SILERO_VAD_CHUNK * 1000 / sample_rate
         if len(speech) < max(3, int(VAD_MIN_SPEECH_MS / chunk_ms)):
             return False, 0, 0
@@ -544,6 +595,8 @@ def _silero_vad(samples, sample_rate: int) -> tuple[bool, int, int] | None:
             return False, 0, 0
         return True, start, end
     except Exception as exc:
+        _SILERO_SESSION = None
+        _SILERO_UNAVAILABLE = True
         VAD_LOGGER.warning(
             "silero VAD failed (%s: %s); falling back to the energy gate",
             type(exc).__name__, exc,
@@ -552,14 +605,17 @@ def _silero_vad(samples, sample_rate: int) -> tuple[bool, int, int] | None:
 
 
 def _select_vad_tier() -> str:
-    """Choose and report the available VAD backend once per process."""
+    """Choose and report the available VAD backend once per process.
+
+    NEXVOICE_VAD_SILERO is a process-start setting, not a runtime toggle;
+    tier selection is cached after the first call.
+    """
     global _VAD_TIER
     if _VAD_TIER is not None:
         return _VAD_TIER
     tier = "numpy"
-    if os.environ.get("NEXVOICE_VAD_SILERO", "auto").strip().casefold() not in {"0", "false"}:
-        if _silero_session() is not None:
-            tier = "silero"
+    if _silero_enabled() and _silero_session() is not None:
+        tier = "silero"
     _VAD_TIER = tier
     VAD_LOGGER.info("NexVoice VAD tier: %s", tier)
     return _VAD_TIER
