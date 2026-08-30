@@ -50,6 +50,16 @@ VAD_FRAME_MS = 30
 VAD_HOP_MS = 15
 VAD_PADDING_MS = 120
 VAD_MIN_SPEECH_MS = 90
+# Silero v5 ONNX tier (票A follow-up, 2026-08-30). The sha256 is the real pin:
+# it matches the model bundled with the silero-vad pip package this was
+# verified against; the URL is only the fetch source and may drift.
+SILERO_VAD_MODEL_URL = (
+    "https://github.com/snakers4/silero-vad/raw/master/src/silero_vad/data/silero_vad.onnx"
+)
+SILERO_VAD_SHA256 = "1a153a22f4509e292a94e67d6f9b85e8deb25b4988682b7e174c65279d8788e3"
+SILERO_VAD_CHUNK = 512    # silero v5 contract @16 kHz
+SILERO_VAD_CONTEXT = 64   # trailing-context samples prepended to each chunk
+SILERO_SPEECH_THRESHOLD = 0.5
 VAD_LOGGER = logging.getLogger(__name__)
 # Whisper's anti-repetition mechanism: when greedy (t=0) decoding fails the
 # compression-ratio check (the signature of a "可以看到，可以看到，…" loop),
@@ -133,9 +143,18 @@ def pinned_model_path(model: str) -> str:
             from huggingface_hub import snapshot_download  # type: ignore
 
             resolved = snapshot_download(repo_id=model, revision=revision)
-    except Exception:
+    except Exception as exc:
         # Offline, no hub package, malformed manifest, revision withdrawn --
         # all fall back to the unpinned id rather than failing transcription.
+        # The fallback is cached for the process lifetime (a retry per
+        # transcription call would stall dictation on a flaky network), so say
+        # so once and loudly: a silently unpinned model tracks the repo's
+        # moving default revision instead of the manifest revision.
+        VAD_LOGGER.warning(
+            "pinned_model_path(%s): falling back to unpinned id for this "
+            "process (%s: %s); model revision is no longer manifest-pinned",
+            model, type(exc).__name__, exc,
+        )
         resolved = model
     _PINNED_PATH_CACHE[model] = resolved
     return resolved
@@ -417,21 +436,141 @@ def _numpy_vad(samples, sample_rate: int) -> tuple[bool, int, int]:
     return True, start, end
 
 
+_SILERO_SESSION = None
+_SILERO_UNAVAILABLE = False
+
+
+def silero_model_path() -> Path:
+    """Resolve (downloading and sha256-verifying on first use) the pinned
+    silero VAD model. A missing/corrupt/undownloadable model is remembered for
+    the process lifetime so a transcription burst never stalls on retries."""
+    global _SILERO_UNAVAILABLE
+    path = Path.home() / ".cache" / "nexvoice" / "models" / "silero-vad" / "silero_vad.onnx"
+    if _SILERO_UNAVAILABLE:
+        return path
+    try:
+        if path.exists() and hashlib.sha256(path.read_bytes()).hexdigest() == SILERO_VAD_SHA256:
+            return path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        import urllib.request
+
+        tmp = path.with_suffix(".onnx.tmp")
+        with urllib.request.urlopen(SILERO_VAD_MODEL_URL, timeout=30) as response:
+            tmp.write_bytes(response.read())
+        digest = hashlib.sha256(tmp.read_bytes()).hexdigest()
+        if digest != SILERO_VAD_SHA256:
+            tmp.unlink(missing_ok=True)
+            raise ValueError(f"silero VAD model sha256 mismatch: {digest}")
+        tmp.replace(path)
+    except Exception as exc:
+        _SILERO_UNAVAILABLE = True
+        VAD_LOGGER.warning(
+            "silero VAD model unavailable (%s: %s); VAD stays on the numpy energy gate",
+            type(exc).__name__, exc,
+        )
+    return path
+
+
+def _silero_session():
+    """Lazily build the ONNX session, or None when the tier cannot run."""
+    global _SILERO_SESSION, _SILERO_UNAVAILABLE
+    if _SILERO_SESSION is not None:
+        return _SILERO_SESSION
+    if os.environ.get("NEXVOICE_VAD_SILERO", "auto").strip().casefold() in {"0", "false"}:
+        return None
+    try:
+        import onnxruntime
+
+        path = silero_model_path()
+        if not path.exists():
+            return None
+        options = onnxruntime.SessionOptions()
+        options.inter_op_num_threads = 1
+        options.intra_op_num_threads = 1
+        _SILERO_SESSION = onnxruntime.InferenceSession(
+            str(path), providers=["CPUExecutionProvider"], sess_options=options
+        )
+    except Exception as exc:
+        _SILERO_UNAVAILABLE = True
+        VAD_LOGGER.warning(
+            "silero VAD backend unavailable (%s: %s); VAD stays on the numpy energy gate",
+            type(exc).__name__, exc,
+        )
+        return None
+    return _SILERO_SESSION
+
+
+def _silero_vad(samples, sample_rate: int) -> tuple[bool, int, int] | None:
+    """Silero streaming VAD with the same gate/outer-trim contract as
+    _numpy_vad. Returns None when the backend failed and the caller should
+    fall back to the energy gate for this clip. Per the official OnnxWrapper,
+    each 512-sample chunk carries a 64-sample trailing-context prefix and the
+    recurrent state threads through the whole clip."""
+    import numpy as np
+
+    session = _silero_session()
+    if session is None or sample_rate != 16000:
+        return None
+    try:
+        x = np.asarray(samples, dtype=np.float32)
+        state = np.zeros((2, 1, 128), dtype=np.float32)
+        context = np.zeros(SILERO_VAD_CONTEXT, dtype=np.float32)
+        flags = []
+        for i in range(0, len(x) - SILERO_VAD_CHUNK + 1, SILERO_VAD_CHUNK):
+            chunk = np.concatenate([context, x[i:i + SILERO_VAD_CHUNK]])
+            prob, state = session.run(
+                None,
+                {
+                    "input": chunk[None, :],
+                    "state": state,
+                    "sr": np.array(16000, dtype=np.int64),
+                },
+            )
+            state = state.astype(np.float32)
+            context = chunk[-SILERO_VAD_CONTEXT:].copy()
+            flags.append(float(prob[0, 0]) >= SILERO_SPEECH_THRESHOLD)
+        if not flags:
+            return False, 0, 0
+        speech = np.flatnonzero(flags)
+        # Same gate accounting as the energy tier: a handful of flagged frames
+        # must survive the minimum-speech duration before the clip counts.
+        chunk_ms = SILERO_VAD_CHUNK * 1000 / sample_rate
+        if len(speech) < max(3, int(VAD_MIN_SPEECH_MS / chunk_ms)):
+            return False, 0, 0
+        pad = int(sample_rate * VAD_PADDING_MS / 1000)
+        start = max(0, int(speech[0] * SILERO_VAD_CHUNK) - pad)
+        end = min(len(x), int((speech[-1] + 1) * SILERO_VAD_CHUNK) + pad)
+        if end - start < int(sample_rate * VAD_MIN_SPEECH_MS / 1000):
+            return False, 0, 0
+        return True, start, end
+    except Exception as exc:
+        VAD_LOGGER.warning(
+            "silero VAD failed (%s: %s); falling back to the energy gate",
+            type(exc).__name__, exc,
+        )
+        return None
+
+
 def _select_vad_tier() -> str:
     """Choose and report the available VAD backend once per process."""
     global _VAD_TIER
     if _VAD_TIER is not None:
         return _VAD_TIER
-    # An ONNX tier is a deliberate future option, gated on shipping and
-    # testing a real model; the verified backend that ships today is numpy.
-    _VAD_TIER = "numpy"
-    VAD_LOGGER.info("NexVoice VAD tier: %s", _VAD_TIER)
+    tier = "numpy"
+    if os.environ.get("NEXVOICE_VAD_SILERO", "auto").strip().casefold() not in {"0", "false"}:
+        if _silero_session() is not None:
+            tier = "silero"
+    _VAD_TIER = tier
+    VAD_LOGGER.info("NexVoice VAD tier: %s", tier)
     return _VAD_TIER
 
 
 def _vad_bounds(samples, sample_rate: int) -> tuple[bool, int, int]:
     """Run the verified VAD backend."""
-    _select_vad_tier()
+    if _select_vad_tier() == "silero":
+        result = _silero_vad(samples, sample_rate)
+        if result is not None:
+            return result
     return _numpy_vad(samples, sample_rate)
 
 

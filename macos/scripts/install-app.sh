@@ -185,3 +185,30 @@ if [[ -e "$BACKUP" ]]; then
   echo "previous version: $BACKUP"
 fi
 codesign -dvvv "$CANONICAL" 2>&1 | grep -E "TeamIdentifier|CDHash|Signature="
+
+# 票F (2026-08-30): the gateway LaunchAgents are long-lived uvicorn processes
+# serving server/ straight from the checkout. Reinstalling without restarting
+# them leaves stale code serving 5111 for days (real incident 2026-08-30: the
+# 08-25 gateway kept answering with pre-translate-style code after ticket B2
+# shipped, so every local-gateway translation failed).
+for GATEWAY_LABEL in ai.nexvoice.gateway ai.nexvoice.gateway.tailscale; do
+  if launchctl print "gui/$UID/$GATEWAY_LABEL" >/dev/null 2>&1; then
+    echo "restarting $GATEWAY_LABEL to pick up current server code…"
+    launchctl kickstart -k "gui/$UID/$GATEWAY_LABEL" >/dev/null 2>&1 || \
+      echo "warning: kickstart $GATEWAY_LABEL failed" >&2
+  fi
+done
+
+if launchctl print "gui/$UID/ai.nexvoice.gateway" >/dev/null 2>&1; then
+  GATEWAY_HEALTH=""
+  for _ in {1..20}; do
+    GATEWAY_HEALTH=$(curl -s -m 2 http://127.0.0.1:5111/health 2>/dev/null || true)
+    [[ "$GATEWAY_HEALTH" == *'"status":"ok"'* ]] && break
+    sleep 0.5
+  done
+  if [[ "$GATEWAY_HEALTH" == *'"status":"ok"'* ]]; then
+    echo "gateway restarted and healthy"
+  else
+    echo "warning: gateway /health not green after restart; it may still serve stale code" >&2
+  fi
+fi
