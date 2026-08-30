@@ -78,7 +78,13 @@ class TestVad:
     def test_leading_silence_is_trimmed_but_speech_decodes(self):
         calls = []
         samples = [0.0] * (3 * 16000) + speech_samples() + [0.0] * (16000 // 2)
-        with patch.dict(sys.modules, {"mlx_whisper": fake_mlx(calls)}):
+        # The synthetic AM-tone fixture is speech-like to the numpy energy
+        # gate but is (correctly) rejected by the learned silero tier; this
+        # test characterizes the numpy trim contract. Real-speech trim
+        # coverage for the silero tier lives in tests/test_vad_silero.py.
+        with patch.object(runtime, "_VAD_TIER", "numpy"), patch.dict(
+            sys.modules, {"mlx_whisper": fake_mlx(calls)}
+        ):
             assert runtime.transcribe_wav(wav_for(samples)) == "spoken text"
         assert len(calls) == 1
         assert 16000 < calls[0] < len(samples)
@@ -100,11 +106,19 @@ class TestVad:
             [0.2 * math.sin(2 * math.pi * 1000 * i / 16000) for i in range(5 * 16000)]
         )
         with patch.dict(os.environ, {"NEXVOICE_VAD": "0"}):
-            assert runtime._select_vad_tier() == "numpy"
+            # Tier selection is orthogonal to the master VAD switch; whatever
+            # backend is selected, re-enabling must gate this steady tone.
+            assert runtime._select_vad_tier() in {"numpy", "silero"}
         with patch.dict(os.environ, {"NEXVOICE_VAD": "1"}):
             assert runtime._trim_wav_for_vad(tone) == b""
 
-    def test_numpy_tier_is_the_only_selected_backend(self):
+    def test_tier_selection_contract(self):
+        # numpy is the always-available floor (pure numpy, no model); silero is
+        # auto-selected exactly when its onnxruntime backend and pinned model
+        # resolve. Selection is cached per process.
         samples = np.asarray(speech_samples(), dtype=np.float32)
-        assert runtime._select_vad_tier() == "numpy"
+        tier = runtime._select_vad_tier()
+        assert tier in {"numpy", "silero"}
+        if tier == "silero":
+            assert runtime._silero_session() is not None
         assert runtime._numpy_vad(samples, 16000)[0]

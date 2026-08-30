@@ -102,7 +102,12 @@ def to_wav_bytes(samples: np.ndarray, params) -> bytes:
 
 
 def main() -> int:
-    print(f"NEXVOICE_VAD={rt._vad_enabled()}  tier={rt._select_vad_tier()}")
+    # This matrix characterizes the numpy energy gate specifically (its
+    # KNOWN-LIMITATION is a numpy behavior). Pin the tier so installing the
+    # silero tier cannot silently change what "PASS" means here; the silero
+    # tier has its own matrix in test_vad_silero.py.
+    rt._VAD_TIER = "numpy"
+    print(f"NEXVOICE_VAD={rt._vad_enabled()}  tier={rt._select_vad_tier()} (pinned for this matrix)")
     with tempfile.TemporaryDirectory(prefix="nexvoice-vad-") as tmp:
         workdir = Path(tmp)
         speech = {}
