@@ -6,8 +6,10 @@ on:
 
 jobs:
   swift:
-    # Swift tools 6.0 (macos/Package.swift) needs Xcode 16+; macos-14 ships Swift 5.10.
-    runs-on: macos-15
+    # Sources build against the Xcode 26 SDK (local dev toolchain; e.g. Notification
+    # is only Sendable there) — macos-14/15 runners ship Xcode 15/16 and fail
+    # strict-concurrency checks that Xcode 26 passes.
+    runs-on: macos-26
     steps:
       - uses: actions/checkout@v4
       - name: Swift tests
