@@ -6,7 +6,8 @@ on:
 
 jobs:
   swift:
-    runs-on: macos-14
+    # Swift tools 6.0 (macos/Package.swift) needs Xcode 16+; macos-14 ships Swift 5.10.
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
       - name: Swift tests
@@ -42,7 +43,10 @@ jobs:
           # TestClient requires it directly, so it is installed explicitly
           # here for CI.
           grep -vE '^[[:space:]]*mlx[-_]whisper' server/requirements.txt > /tmp/server-requirements-ci.txt
-          pip install -r /tmp/server-requirements-ci.txt pytest httpx2
+          # numpy: runtime/nexvoice_local_runtime.py and the VAD tests import it
+          # directly; on macOS it arrives transitively via mlx-whisper, which is
+          # excluded on this Linux runner, so install it explicitly.
+          pip install -r /tmp/server-requirements-ci.txt pytest httpx2 numpy
       - name: Server + runtime tests
         run: |
           # test_cloud_enabled_default_and_key_not_enough and
