@@ -14,6 +14,7 @@ import importlib
 import importlib.metadata
 import io
 import json
+import logging
 import math
 import os
 import re
@@ -41,6 +42,26 @@ MAX_VOCAB_TERM_BYTES = 128
 MAX_VOCAB_TOTAL_BYTES = 1536
 MAX_PROMPT_BYTES = 2048
 SILENCE_PEAK_THRESHOLD = 0.03
+# VAD deliberately stays a pre-gate, not a second transcription pipeline. A
+# short frame and hop keep partial captions responsive while the padding keeps
+# the model's timestamps useful. Internal gaps are never removed: punctuation
+# inference below relies on the gap between Whisper segments.
+VAD_FRAME_MS = 30
+VAD_HOP_MS = 15
+VAD_PADDING_MS = 120
+VAD_MIN_SPEECH_MS = 90
+# Silero v5 ONNX tier (票A follow-up, 2026-08-30). The sha256 is the real pin:
+# it matches the model bundled with the silero-vad pip package this was
+# verified against; the URL is only the fetch source and may drift.
+SILERO_VAD_MODEL_URL = (
+    "https://github.com/snakers4/silero-vad/raw/master/src/silero_vad/data/silero_vad.onnx"
+)
+SILERO_VAD_SHA256 = "1a153a22f4509e292a94e67d6f9b85e8deb25b4988682b7e174c65279d8788e3"
+SILERO_VAD_CHUNK = 512    # silero v5 contract @16 kHz
+SILERO_VAD_CONTEXT = 64   # trailing-context samples prepended to each chunk
+SILERO_SPEECH_THRESHOLD = 0.5
+SILERO_VAD_MAX_MODEL_BYTES = 16 * 1024 * 1024
+VAD_LOGGER = logging.getLogger(__name__)
 # Whisper's anti-repetition mechanism: when greedy (t=0) decoding fails the
 # compression-ratio check (the signature of a "可以看到，可以看到，…" loop),
 # decode_with_fallback retries at the next temperature. A scalar temperature=0
@@ -72,6 +93,7 @@ _MODEL_LOCK = threading.Lock()
 _PARTIAL_GATE = threading.Lock()
 _MODEL_CACHE: dict[str, object] = {}
 _SHUTTING_DOWN = threading.Event()
+_VAD_TIER: str | None = None
 
 # Distinctive product names only. Whisper mirrors the *style* of the initial
 # prompt, so a long "、"-separated glossary teaches the decoder to sprinkle
@@ -122,9 +144,18 @@ def pinned_model_path(model: str) -> str:
             from huggingface_hub import snapshot_download  # type: ignore
 
             resolved = snapshot_download(repo_id=model, revision=revision)
-    except Exception:
+    except Exception as exc:
         # Offline, no hub package, malformed manifest, revision withdrawn --
         # all fall back to the unpinned id rather than failing transcription.
+        # The fallback is cached for the process lifetime (a retry per
+        # transcription call would stall dictation on a flaky network), so say
+        # so once and loudly: a silently unpinned model tracks the repo's
+        # moving default revision instead of the manifest revision.
+        VAD_LOGGER.warning(
+            "pinned_model_path(%s): falling back to unpinned id for this "
+            "process (%s: %s); model revision is no longer manifest-pinned",
+            model, type(exc).__name__, exc,
+        )
         resolved = model
     _PINNED_PATH_CACHE[model] = resolved
     return resolved
@@ -298,6 +329,44 @@ def join_segments_with_punctuation(segments: list) -> str:
     return out.strip()
 
 
+def to_srt(segments: list[dict]) -> str:
+    """Render Whisper segments as standard SubRip (SRT) text.
+
+    Whisper timestamps are fractional seconds. SRT uses rounded milliseconds;
+    carrying through the total millisecond count keeps values such as
+    ``59.9996`` from producing an invalid ``00:00:59,1000`` timestamp.
+    """
+
+    def timestamp(seconds: object) -> str:
+        try:
+            total_milliseconds = max(0, int(float(seconds) * 1000 + 0.5))
+        except (TypeError, ValueError, OverflowError):
+            total_milliseconds = 0
+        hours, remainder = divmod(total_milliseconds, 3_600_000)
+        minutes, remainder = divmod(remainder, 60_000)
+        whole_seconds, milliseconds = divmod(remainder, 1000)
+        return f"{hours:02d}:{minutes:02d}:{whole_seconds:02d},{milliseconds:03d}"
+
+    blocks = []
+    number = 0
+    for segment in segments:
+        if not isinstance(segment, dict):
+            continue
+        number += 1
+        text = str(segment.get("text", "")).strip()
+        blocks.append(
+            "\n".join(
+                (
+                    str(number),
+                    f"{timestamp(segment.get('start', 0.0))} --> "
+                    f"{timestamp(segment.get('end', segment.get('start', 0.0)))}",
+                    text,
+                )
+            )
+        )
+    return "\n\n".join(blocks)
+
+
 # A phrase (2-32 chars) repeated 3+ times back-to-back over a span of ≥10
 # chars is a decoder loop, never real dictation. Short bursts ("哈哈哈哈哈哈")
 # stay untouched via the span floor.
@@ -321,25 +390,307 @@ def collapse_repetition_loops(text: str) -> str:
     return text
 
 
-def transcribe_wav(
+def _vad_enabled() -> bool:
+    return os.environ.get("NEXVOICE_VAD", "1").strip().casefold() not in {"0", "false"}
+
+
+def _numpy_vad(samples, sample_rate: int) -> tuple[bool, int, int]:
+    """Find speech-like outer bounds with numpy energy and zero crossings.
+
+    Energy alone mistakes clicks, tones, and HVAC noise for speech. The small
+    zero-crossing test rejects those steady extremes while retaining ordinary
+    voiced/unvoiced speech. This is a gate, not a speech recognizer.
+    """
+    import numpy as np
+
+    if len(samples) == 0:
+        return False, 0, 0
+    frame_size = max(1, int(sample_rate * VAD_FRAME_MS / 1000))
+    hop_size = max(1, int(sample_rate * VAD_HOP_MS / 1000))
+    if len(samples) < frame_size:
+        return False, 0, 0
+    starts = np.arange(0, len(samples) - frame_size + 1, hop_size)
+    frames = np.asarray(samples, dtype=np.float32)[starts[:, None] + np.arange(frame_size)]
+    rms = np.sqrt(np.mean(frames * frames, axis=1) + 1e-12)
+    crossings = np.mean((frames[:, 1:] * frames[:, :-1]) < 0, axis=1)
+    noise_floor = float(np.percentile(rms, 20))
+    # A 20th-percentile floor is still part of a quiet utterance when the
+    # clip contains speech throughout, so a modest ratio keeps voiced frames
+    # while the crossing/variation checks reject stationary noise.
+    energy_cutoff = max(noise_floor * 1.35, 0.006)
+    # White noise is near 0.5 crossings/sample; a steady tone is near zero.
+    candidates = (rms >= energy_cutoff) & (crossings >= 0.01) & (crossings <= 0.35)
+    if int(candidates.sum()) < max(3, int(VAD_MIN_SPEECH_MS / VAD_FRAME_MS)):
+        return False, 0, 0
+    # Steady tones can sit in the crossing range, so require movement in the
+    # candidate envelope or in its crossing rate, as real speech has both.
+    candidate_rms = rms[candidates]
+    candidate_zcr = crossings[candidates]
+    if float(np.ptp(candidate_rms)) < 0.01 and float(np.ptp(candidate_zcr)) < 0.02:
+        return False, 0, 0
+    indices = np.flatnonzero(candidates)
+    pad = int(sample_rate * VAD_PADDING_MS / 1000)
+    start = max(0, int(indices[0] * hop_size) - pad)
+    end = min(len(samples), int(indices[-1] * hop_size + frame_size) + pad)
+    if end - start < int(sample_rate * VAD_MIN_SPEECH_MS / 1000):
+        return False, 0, 0
+    return True, start, end
+
+
+_SILERO_SESSION = None
+_SILERO_UNAVAILABLE = False
+_SILERO_ENABLED: bool | None = None
+_SILERO_MODEL_LOCK = threading.Lock()
+
+
+def silero_model_path() -> Path:
+    """Resolve (downloading and sha256-verifying on first use) the pinned
+    silero VAD model. A missing/corrupt/undownloadable model is remembered for
+    the process lifetime so a transcription burst never stalls on retries."""
+    global _SILERO_UNAVAILABLE
+    path = Path.home() / ".cache" / "nexvoice" / "models" / "silero-vad" / "silero_vad.onnx"
+    # The lock serializes resolve+download within this process. Each process
+    # uses its own temporary file; sha256 verification before atomic rename
+    # lets cross-process races converge on the same verified final bytes.
+    with _SILERO_MODEL_LOCK:
+        if _SILERO_UNAVAILABLE:
+            return path
+        tmp_path = None
+        try:
+            if path.exists() and hashlib.sha256(path.read_bytes()).hexdigest() == SILERO_VAD_SHA256:
+                return path
+            path.parent.mkdir(parents=True, exist_ok=True)
+            import urllib.request
+
+            with tempfile.NamedTemporaryFile(
+                dir=path.parent,
+                prefix=f".{path.name}.",
+                suffix=".tmp",
+                delete=False,
+            ) as tmp_file:
+                tmp_path = Path(tmp_file.name)
+                with urllib.request.urlopen(SILERO_VAD_MODEL_URL, timeout=30) as response:
+                    model_bytes = response.read(SILERO_VAD_MAX_MODEL_BYTES + 1)
+                if len(model_bytes) > SILERO_VAD_MAX_MODEL_BYTES:
+                    raise ValueError(
+                        f"silero VAD model exceeds {SILERO_VAD_MAX_MODEL_BYTES} bytes"
+                    )
+                tmp_file.write(model_bytes)
+                tmp_file.flush()
+                os.fsync(tmp_file.fileno())
+            digest = hashlib.sha256(tmp_path.read_bytes()).hexdigest()
+            if digest != SILERO_VAD_SHA256:
+                raise ValueError(f"silero VAD model sha256 mismatch: {digest}")
+            tmp_path.replace(path)
+        except Exception as exc:
+            _SILERO_UNAVAILABLE = True
+            VAD_LOGGER.warning(
+                "silero VAD model unavailable (%s: %s); VAD stays on the numpy energy gate",
+                type(exc).__name__, exc,
+            )
+        finally:
+            if tmp_path is not None:
+                tmp_path.unlink(missing_ok=True)
+    return path
+
+
+def _silero_enabled() -> bool:
+    global _SILERO_ENABLED
+    if _SILERO_ENABLED is None:
+        _SILERO_ENABLED = (
+            os.environ.get("NEXVOICE_VAD_SILERO", "auto").strip().casefold()
+            not in {"0", "false"}
+        )
+    return _SILERO_ENABLED
+
+
+def _silero_session():
+    """Lazily build the ONNX session, or None when the tier cannot run.
+
+    NEXVOICE_VAD_SILERO has process-start semantics: it is read when the
+    session is first constructed, and the resulting session is cached. It is
+    not a runtime toggle.
+    """
+    global _SILERO_SESSION, _SILERO_UNAVAILABLE
+    if _SILERO_UNAVAILABLE:
+        return None
+    if not _silero_enabled():
+        return None
+    if _SILERO_SESSION is not None:
+        return _SILERO_SESSION
+    try:
+        import onnxruntime
+
+        path = silero_model_path()
+        if not path.exists():
+            return None
+        options = onnxruntime.SessionOptions()
+        options.inter_op_num_threads = 1
+        options.intra_op_num_threads = 1
+        _SILERO_SESSION = onnxruntime.InferenceSession(
+            str(path), providers=["CPUExecutionProvider"], sess_options=options
+        )
+    except Exception as exc:
+        _SILERO_UNAVAILABLE = True
+        VAD_LOGGER.warning(
+            "silero VAD backend unavailable (%s: %s); VAD stays on the numpy energy gate",
+            type(exc).__name__, exc,
+        )
+        return None
+    return _SILERO_SESSION
+
+
+def _silero_vad(samples, sample_rate: int) -> tuple[bool, int, int] | None:
+    """Silero streaming VAD with the same gate/outer-trim contract as
+    _numpy_vad. Returns None when the backend failed and the caller should
+    fall back to the energy gate for this clip. Per the official OnnxWrapper,
+    each 512-sample chunk carries a 64-sample trailing-context prefix and the
+    recurrent state threads through the whole clip."""
+    import numpy as np
+
+    global _SILERO_SESSION, _SILERO_UNAVAILABLE
+
+    if sample_rate != 16000:
+        return None
+    session = _silero_session()
+    if session is None:
+        return None
+    try:
+        x = np.asarray(samples, dtype=np.float32)
+        state = np.zeros((2, 1, 128), dtype=np.float32)
+        context = np.zeros(SILERO_VAD_CONTEXT, dtype=np.float32)
+        flags = []
+        for i in range(0, len(x), SILERO_VAD_CHUNK):
+            audio_chunk = x[i:i + SILERO_VAD_CHUNK]
+            if len(audio_chunk) < SILERO_VAD_CHUNK:
+                audio_chunk = np.pad(
+                    audio_chunk,
+                    (0, SILERO_VAD_CHUNK - len(audio_chunk)),
+                    mode="constant",
+                )
+            chunk = np.concatenate([context, audio_chunk])
+            prob, state = session.run(
+                None,
+                {
+                    "input": chunk[None, :],
+                    "state": state,
+                    "sr": np.array(16000, dtype=np.int64),
+                },
+            )
+            state = state.astype(np.float32)
+            context = chunk[-SILERO_VAD_CONTEXT:].copy()
+            flags.append(float(prob[0, 0]) >= SILERO_SPEECH_THRESHOLD)
+        if not flags:
+            return False, 0, 0
+        speech = np.flatnonzero(flags)
+        # Same gate accounting as the energy tier: count flagged chunks across
+        # the whole clip, not a continuous speech duration.
+        chunk_ms = SILERO_VAD_CHUNK * 1000 / sample_rate
+        if len(speech) < max(3, int(VAD_MIN_SPEECH_MS / chunk_ms)):
+            return False, 0, 0
+        pad = int(sample_rate * VAD_PADDING_MS / 1000)
+        start = max(0, int(speech[0] * SILERO_VAD_CHUNK) - pad)
+        end = min(len(x), int((speech[-1] + 1) * SILERO_VAD_CHUNK) + pad)
+        if end - start < int(sample_rate * VAD_MIN_SPEECH_MS / 1000):
+            return False, 0, 0
+        return True, start, end
+    except Exception as exc:
+        _SILERO_SESSION = None
+        _SILERO_UNAVAILABLE = True
+        VAD_LOGGER.warning(
+            "silero VAD failed (%s: %s); falling back to the energy gate",
+            type(exc).__name__, exc,
+        )
+        return None
+
+
+def _select_vad_tier() -> str:
+    """Choose and report the available VAD backend once per process.
+
+    NEXVOICE_VAD_SILERO is a process-start setting, not a runtime toggle;
+    tier selection is cached after the first call.
+    """
+    global _VAD_TIER
+    if _VAD_TIER is not None:
+        return _VAD_TIER
+    tier = "numpy"
+    if _silero_enabled() and _silero_session() is not None:
+        tier = "silero"
+    _VAD_TIER = tier
+    VAD_LOGGER.info("NexVoice VAD tier: %s", tier)
+    return _VAD_TIER
+
+
+def _vad_bounds(samples, sample_rate: int) -> tuple[bool, int, int]:
+    """Run the verified VAD backend."""
+    if _select_vad_tier() == "silero":
+        result = _silero_vad(samples, sample_rate)
+        if result is not None:
+            return result
+    return _numpy_vad(samples, sample_rate)
+
+
+def _trim_wav_for_vad(audio: bytes) -> bytes:
+    """Reject or outer-trim a PCM WAV before paying the Whisper decode cost."""
+    import numpy as np
+
+    with wave.open(io.BytesIO(audio), "rb") as wav:
+        params = wav.getparams()
+        raw = wav.readframes(wav.getnframes())
+    if not raw or params.sampwidth != 2:
+        return audio
+    samples = (
+        np.frombuffer(raw, dtype="<i2")
+        .reshape(-1, params.nchannels)
+        .mean(axis=1)
+        / 32768.0
+    )
+    speech, start, end = _vad_bounds(samples, params.framerate)
+    if not speech:
+        return b""
+    if start == 0 and end >= len(samples):
+        return audio
+    frame_width = params.sampwidth * params.nchannels
+    trimmed = raw[start * frame_width : end * frame_width]
+    output = io.BytesIO()
+    with wave.open(output, "wb") as wav:
+        wav.setparams(params)
+        wav.writeframes(trimmed)
+    return output.getvalue()
+
+
+def _transcribe_core(
     audio: bytes,
     *,
     quality: str = "final",
     vocab_terms: list[str] | None = None,
-) -> str:
-    """Run MLX Whisper when the optional local dependency is installed."""
+    skip_vad: bool = False,
+) -> tuple[str, list]:
+    """Run MLX Whisper and return the cleaned text plus native segments."""
     # Never ask Whisper to decode a muted/empty recording: Whisper can emit
     # memorized broadcast phrases for silence, which must never be pasted.
     try:
         with wave.open(__import__("io").BytesIO(audio), "rb") as wav:
             raw = wav.readframes(wav.getnframes())
         if not raw:
-            return ""
+            return "", []
         peak = max(abs(sample) for sample in __import__("array").array("h", raw)) / 32768.0
         if peak < SILENCE_PEAK_THRESHOLD:
-            return ""
+            return "", []
     except (OSError, ValueError, OverflowError):
         pass
+    audio_for_model = audio
+    # Warmup clips are internal synthetic audio; bypass VAD so they always
+    # exercise model loading while real user audio still pays the pre-gate.
+    if _vad_enabled() and not skip_vad:
+        try:
+            audio_for_model = _trim_wav_for_vad(audio)
+            if not audio_for_model:
+                return "", []
+        except (OSError, ValueError, OverflowError, ImportError):
+            # Preserve the existing decode path for malformed or unsupported
+            # WAVs; the peak gate above remains the cheap first pass.
+            audio_for_model = audio
     try:
         import mlx_whisper  # type: ignore
     except ImportError as exc:
@@ -367,7 +718,7 @@ def transcribe_wav(
             except (AttributeError, ImportError):
                 holder = None
             with tempfile.NamedTemporaryFile(suffix=".wav") as handle:
-                handle.write(audio)
+                handle.write(audio_for_model)
                 handle.flush()
                 result = mlx_whisper.transcribe(
                     handle.name,
@@ -390,8 +741,23 @@ def transcribe_wav(
     if isinstance(segments, list) and segments:
         text = join_segments_with_punctuation(segments)
     else:
+        segments = []
         text = str(result.get("text", "")).strip()
-    return collapse_repetition_loops(text)
+    return collapse_repetition_loops(text), segments
+
+
+def transcribe_wav(
+    audio: bytes,
+    *,
+    quality: str = "final",
+    vocab_terms: list[str] | None = None,
+    skip_vad: bool = False,
+) -> str:
+    """Run MLX Whisper when the optional local dependency is installed."""
+    text, _segments = _transcribe_core(
+        audio, quality=quality, vocab_terms=vocab_terms, skip_vad=skip_vad
+    )
+    return text
 
 
 def _make_warmup_wav() -> bytes:
@@ -438,7 +804,7 @@ def _warm_final_model() -> None:
     """
     started = time.monotonic()
     try:
-        transcribe_wav(_make_warmup_wav(), quality="final")
+        transcribe_wav(_make_warmup_wav(), quality="final", skip_vad=True)
     except Exception as exc:  # pragma: no cover - best-effort only, e.g. mlx-whisper missing
         print(f"warmup: final model failed: {type(exc).__name__}: {exc}", flush=True)
         return
@@ -458,7 +824,7 @@ def _warm_partial_model() -> None:
     """
     started = time.monotonic()
     try:
-        transcribe_wav(_make_warmup_wav(), quality="partial")
+        transcribe_wav(_make_warmup_wav(), quality="partial", skip_vad=True)
     except Exception as exc:  # pragma: no cover - best-effort only, e.g. mlx-whisper missing
         print(f"warmup: partial model failed: {type(exc).__name__}: {exc}", flush=True)
         return
@@ -585,25 +951,45 @@ class Handler(BaseHTTPRequestHandler):
             sequence = body.get("sequence", 0)
             if isinstance(sequence, bool) or not isinstance(sequence, int) or not 0 <= sequence <= 1_000_000:
                 raise ValueError("invalid sequence")
+            want_segments = body.get("want_segments", False)
+            want_srt = body.get("want_srt", False)
+            if not isinstance(want_segments, bool) or not isinstance(want_srt, bool):
+                raise ValueError("want_segments and want_srt must be booleans")
             vocab_terms = safe_vocab_terms(body.get("vocab_terms", []))
             started = time.monotonic()
-            text = transcribe_wav(audio, quality=quality, vocab_terms=vocab_terms)
+            if want_segments or want_srt:
+                text, segments = _transcribe_core(
+                    audio, quality=quality, vocab_terms=vocab_terms
+                )
+            else:
+                text = transcribe_wav(audio, quality=quality, vocab_terms=vocab_terms)
+                segments = []
             nonce = self.headers.get("X-NexVoice-Local-Nonce", "")
-            self._json(
-                200,
-                {
-                    "text": text,
-                    "ms": int((time.monotonic() - started) * 1000),
-                    "session": session,
-                    "sequence": sequence,
-                    "contract_version": CONTRACT_VERSION,
-                    "runtime_build": RUNTIME_BUILD,
-                    "instance_id": INSTANCE_ID,
-                    "response_proof": _proof(
-                        secret, transcribe_response_proof_message(nonce, session, sequence, text)
-                    ),
-                },
-            )
+            response = {
+                "text": text,
+                "ms": int((time.monotonic() - started) * 1000),
+                "session": session,
+                "sequence": sequence,
+                "contract_version": CONTRACT_VERSION,
+                "runtime_build": RUNTIME_BUILD,
+                "instance_id": INSTANCE_ID,
+                "response_proof": _proof(
+                    secret, transcribe_response_proof_message(nonce, session, sequence, text)
+                ),
+            }
+            if want_segments:
+                response["segments"] = [
+                    {
+                        "start": segment.get("start"),
+                        "end": segment.get("end"),
+                        "text": str(segment.get("text", "")).strip(),
+                    }
+                    for segment in segments
+                    if isinstance(segment, dict)
+                ]
+            if want_srt:
+                response["srt"] = to_srt(segments)
+            self._json(200, response)
         except RuntimeBusy:
             self._json(409, {"error": "busy"})
         except Exception as exc:  # do not expose paths or secrets

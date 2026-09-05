@@ -52,11 +52,20 @@ enum VoiceRuntimeError: LocalizedError {
     }
 }
 
+struct VoiceResult: Equatable, Sendable {
+    let original: String
+    let pasted: String
+    let translation: String?
+    let translationFailed: Bool
+}
+
 @MainActor
 final class VoiceRuntimeController {
     var onStateChange: ((VoiceRuntimeState) -> Void)?
     var onTranscript: ((String) -> Void)?
+    var onResult: ((VoiceResult) -> Void)?
     var preferencesProvider: (() -> RuntimePreferences)?
+    var productPreferencesProvider: (() -> ProductPreferences)?
     var vocabularyProvider: (() -> [VocabEntry])?
 
     private(set) var state: VoiceRuntimeState = .disabled {
@@ -80,12 +89,19 @@ final class VoiceRuntimeController {
     private var currentSession: UUID?
     private var targetApplication: NSRunningApplication?
     private var hotkeyEngine = HotkeyGestureEngine()
+    private var translateHotkeyEngine = HotkeyGestureEngine(
+        profile: HotkeyProfile(trigger: .leftCommand, behavior: .toggle)
+    )
+    private var askHotkeyEngine = HotkeyGestureEngine(
+        profile: HotkeyProfile(trigger: .function, behavior: .toggle)
+    )
     private var pendingHotkeyProfile: HotkeyProfile?
     private var ownershipGeneration = 0
     private var desiredOwner: HotkeyOwner = .legacy
     private let ownershipMutex = AsyncMutex()
     private var pasteGate = SessionPasteGate()
     private var selectedTextAtArm: String?
+    private var activeMode: VoiceMode = .dictate
     private var liveCaptionsEnabled = true
     private var activeVocabulary: [VocabEntry] = []
     private var liveTranscriptSequence = 0
@@ -112,6 +128,18 @@ final class VoiceRuntimeController {
         pendingHotkeyProfile = nil
         hotkeyEngine.setProfile(profile)
         DiagnosticLog.log("hotkey profile applied: \(profile.trigger.rawValue)/\(profile.behavior.rawValue)")
+    }
+
+    func updateTranslateHotkeyProfile(_ profile: HotkeyProfile) {
+        guard state == .disabled || state == .idle || state.isTerminal else { return }
+        translateHotkeyEngine.setProfile(profile)
+        DiagnosticLog.log("translate hotkey profile applied: \(profile.trigger.rawValue)/\(profile.behavior.rawValue)")
+    }
+
+    func updateAskHotkeyProfile(_ profile: HotkeyProfile) {
+        guard state == .disabled || state == .idle || state.isTerminal else { return }
+        askHotkeyEngine.setProfile(profile)
+        DiagnosticLog.log("ask hotkey profile applied: \(profile.trigger.rawValue)/\(profile.behavior.rawValue)")
     }
 
     init() {
@@ -303,7 +331,6 @@ final class VoiceRuntimeController {
                 state = .cancelled
                 return
             }
-            cancelHotkeyGestureForChordIfNeeded()
             let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
             let optionCmd = flags.contains(.option) && flags.contains(.command)
                 && !flags.contains(.control) && !flags.contains(.shift)
@@ -317,27 +344,76 @@ final class VoiceRuntimeController {
                 dispatchLastDraft()
                 return
             }
+            if hotkeyEngine.profile.keyCode != nil
+                || translateHotkeyEngine.profile.keyCode != nil
+                || askHotkeyEngine.profile.keyCode != nil {
+                if processHotkey(event, mode: .translate) { return }
+                if processHotkey(event, mode: .ask) { return }
+                _ = processHotkey(event, mode: .dictate)
+            }
             return
         }
 
-        guard let phase = hotkeyPhase(for: event) else { return }
-        let action = hotkeyEngine.handle(
+        if processHotkey(event, mode: .translate) { return }
+        if processHotkey(event, mode: .ask) { return }
+        _ = processHotkey(event, mode: .dictate)
+    }
+
+    private func processHotkey(
+        _ event: NSEvent,
+        mode: VoiceMode
+    ) -> Bool {
+        // 票E 熱修：引擎選擇必須 exhaustive。原三元運算子讓 .ask 落入 dictate
+        // 引擎，右 Option 事件被 ask 與 dictate 兩條路徑重複處理，struct 引擎
+        // 各自寫回後狀態機錯亂（Option 全滅、Cmd 正常）。switch 保證新模式
+        // 忘了接引擎時編譯期就失敗。
+        var engine: HotkeyGestureEngine
+        switch mode {
+        case .translate: engine = translateHotkeyEngine
+        case .ask: engine = askHotkeyEngine
+        case .dictate: engine = hotkeyEngine
+        }
+        if event.type == .flagsChanged,
+           engine.triggerIsDown,
+           !engine.profile.trigger.accepts(keyCode: event.keyCode),
+           CGEventSource.keyState(.combinedSessionState, key: CGKeyCode(event.keyCode)) {
+            let action = engine.cancelForChord(isRecording: state == .recording && activeMode == mode)
+            setHotkeyEngine(engine, for: mode)
+            if action == .cancelRecording {
+                DiagnosticLog.log("\(mode.rawValue) hotkey gesture cancelled because it became a chord")
+                cancelCurrentSession()
+                state = .cancelled
+            }
+            return true
+        }
+        guard let phase = hotkeyPhase(for: event, profile: engine.profile) else { return false }
+        let action = engine.handle(
             phase,
-            isRecording: state == .recording,
+            isRecording: state == .recording && activeMode == mode,
             canStart: state == .idle || state.isTerminal
         )
+        setHotkeyEngine(engine, for: mode)
         switch action {
         case .startRecording:
-            DiagnosticLog.log("hotkey start: \(hotkeyEngine.profile.trigger.rawValue)/\(hotkeyEngine.profile.behavior.rawValue)")
-            startRecording()
+            DiagnosticLog.log("\(mode.rawValue) hotkey start: \(engine.profile.trigger.rawValue)/\(engine.profile.behavior.rawValue)")
+            startRecording(mode: mode)
         case .finishRecording:
-            DiagnosticLog.log("hotkey finish: \(hotkeyEngine.profile.trigger.rawValue)/\(hotkeyEngine.profile.behavior.rawValue)")
+            DiagnosticLog.log("\(mode.rawValue) hotkey finish: \(engine.profile.trigger.rawValue)/\(engine.profile.behavior.rawValue)")
             finishRecordingNow()
         case .cancelRecording:
             cancelCurrentSession()
             state = .cancelled
         case .none:
             break
+        }
+        return true
+    }
+
+    private func setHotkeyEngine(_ engine: HotkeyGestureEngine, for mode: VoiceMode) {
+        switch mode {
+        case .translate: translateHotkeyEngine = engine
+        case .ask: askHotkeyEngine = engine
+        case .dictate: hotkeyEngine = engine
         }
     }
 
@@ -376,10 +452,11 @@ final class VoiceRuntimeController {
         }
     }
 
-    private func startRecording() {
+    private func startRecording(mode: VoiceMode = .dictate) {
         guard state == .idle || state.isTerminal else { return }
         let session = UUID()
         currentSession = session
+        activeMode = mode
         activeVocabulary = VocabularyPolicy.sanitizedEntries(
             vocabularyProvider?() ?? VocabStore.loadCached()
         )
@@ -444,7 +521,8 @@ final class VoiceRuntimeController {
             session: session,
             fileURL: recording.url,
             selected: selectedTextAtArm,
-            vocabulary: activeVocabulary
+            vocabulary: activeVocabulary,
+            mode: activeMode
         )
         selectedTextAtArm = nil
     }
@@ -453,7 +531,8 @@ final class VoiceRuntimeController {
         session: UUID,
         fileURL: URL,
         selected: String?,
-        vocabulary: [VocabEntry]
+        vocabulary: [VocabEntry],
+        mode: VoiceMode
     ) {
         pipelineTask?.cancel()
         pipelineTask = Task { [weak self] in
@@ -499,6 +578,47 @@ final class VoiceRuntimeController {
                     throw VoiceRuntimeError.rejectedTranscript
                 }
 
+                if mode == .translate {
+                    let translatePreferences = currentProductPreferences()
+                    hud.showBusy("翻譯中…")
+                    state = .cleaning
+                    let translation = await api.translate(
+                        instruction,
+                        targetLanguage: translatePreferences.translationTarget,
+                        glossary: VocabularyPolicy.promptTerms(from: vocabulary).prefix(16).map { $0 },
+                        allowCloud: prefs.allowsCloudText
+                    )
+                    try ensureCurrent(session)
+                    if let translation, let translated = TranscriptGuards.sanitize(translation) {
+                        let pasteText = translationPasteText(
+                            original: instruction,
+                            translation: translated,
+                            preference: translatePreferences.translationPasteContent
+                        )
+                        try await finishOutput(
+                            session: session,
+                            original: instruction,
+                            pasted: pasteText,
+                            translation: translated,
+                            translationFailed: false,
+                            route: transcription.route,
+                            statusVerb: "已翻譯"
+                        )
+                    } else {
+                        try await finishOutput(
+                            session: session,
+                            original: instruction,
+                            pasted: instruction,
+                            translation: nil,
+                            translationFailed: true,
+                            route: transcription.route,
+                            statusVerb: "翻譯失敗，已貼上原文"
+                        )
+                        state = .failed("翻譯失敗，已貼上原文")
+                    }
+                    return
+                }
+
                 // Speak-to-edit / speak-to-ask when user had a selection at arm time.
                 if let selected, !selected.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     if prefs.privacyMode {
@@ -538,6 +658,14 @@ final class VoiceRuntimeController {
                     lastSuccessfulText = output
                     LocalHistoryStore.append(text: output, route: transcription.route)
                     onTranscript?(output)
+                    onResult?(
+                        VoiceResult(
+                            original: instruction,
+                            pasted: output,
+                            translation: nil,
+                            translationFailed: false
+                        )
+                    )
                     currentSession = nil
                     activeVocabulary = []
                     hud.hide()
@@ -601,6 +729,14 @@ final class VoiceRuntimeController {
                 lastSuccessfulText = text
                 LocalHistoryStore.append(text: text, route: transcription.route)
                 onTranscript?(text)
+                onResult?(
+                    VoiceResult(
+                        original: instruction,
+                        pasted: text,
+                        translation: nil,
+                        translationFailed: false
+                    )
+                )
                 currentSession = nil
                 activeVocabulary = []
                 hud.hide()
@@ -693,6 +829,61 @@ final class VoiceRuntimeController {
             cloudSTTAllowed: false,
             cloudTextAllowed: false,
             cloudTextConfigured: false
+        )
+    }
+
+    private func currentProductPreferences() -> ProductPreferences {
+        productPreferencesProvider?() ?? ProductPreferences()
+    }
+
+    private func translationPasteText(
+        original: String,
+        translation: String,
+        preference: TranslationPasteContent
+    ) -> String {
+        switch preference {
+        case .translation: translation
+        case .original: original
+        case .both: "\(original)\n\(translation)"
+        }
+    }
+
+    private func finishOutput(
+        session: UUID,
+        original: String,
+        pasted: String,
+        translation: String?,
+        translationFailed: Bool,
+        route: STTRoute,
+        statusVerb: String
+    ) async throws {
+        guard pasteGate.claimPaste(session: session) else { throw CancellationError() }
+        hud.showBusy("貼上中…")
+        state = .pasting
+        let outcome = await PasteService.insertOnce(pasted, target: targetApplication)
+        try ensureCurrent(session)
+        lastSuccessfulText = pasted
+        LocalHistoryStore.append(text: pasted, route: route)
+        onTranscript?(pasted)
+        onResult?(
+            VoiceResult(
+                original: original,
+                pasted: pasted,
+                translation: translation,
+                translationFailed: translationFailed
+            )
+        )
+        currentSession = nil
+        activeVocabulary = []
+        hud.showResult(
+            original: original,
+            translation: translation,
+            status: translationFailed ? "翻譯失敗" : "翻譯完成"
+        )
+        state = .complete(
+            outcome == .pasted
+                ? "\(statusVerb) · \(pasted.count) 字"
+                : "已複製 · \(pasted.count) 字"
         )
     }
 
@@ -815,6 +1006,7 @@ final class VoiceRuntimeController {
         activeVocabulary = []
         liveTranscriptSequence = 0
         hotkeyEngine.reset()
+        translateHotkeyEngine.reset()
         hud.hide()
     }
 
@@ -829,8 +1021,8 @@ final class VoiceRuntimeController {
         )
     }
 
-    private func hotkeyPhase(for event: NSEvent) -> HotkeyGesturePhase? {
-        if let customCode = hotkeyEngine.profile.keyCode {
+    private func hotkeyPhase(for event: NSEvent, profile: HotkeyProfile) -> HotkeyGesturePhase? {
+        if let customCode = profile.keyCode {
             guard event.keyCode == customCode else { return nil }
             switch event.type {
             case .keyDown: return .pressed
@@ -840,13 +1032,7 @@ final class VoiceRuntimeController {
         }
         guard event.type == .flagsChanged else { return nil }
 
-        if hotkeyEngine.triggerIsDown,
-           !hotkeyEngine.profile.trigger.accepts(keyCode: event.keyCode),
-           CGEventSource.keyState(.combinedSessionState, key: CGKeyCode(event.keyCode)) {
-            cancelHotkeyGestureForChordIfNeeded()
-            return nil
-        }
-        guard hotkeyEngine.profile.trigger.accepts(keyCode: event.keyCode) else { return nil }
+        guard profile.trigger.accepts(keyCode: event.keyCode) else { return nil }
 
         // AppKit/CGEvent can report modifier key state before the combined
         // session key-state table updates (especially with event taps and
@@ -854,7 +1040,7 @@ final class VoiceRuntimeController {
         // keyState remains only a fallback for aggregate left/right Option.
         let normalizedFlags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
         let modifierIsPressed = normalizedFlags.contains(
-            hotkeyEngine.profile.trigger.modifierFlag
+            profile.trigger.modifierFlag
         )
         // For flagsChanged, the event's modifier mask is the authoritative
         // edge.  CGEventSource.keyState can lag behind the release event and
@@ -866,7 +1052,7 @@ final class VoiceRuntimeController {
             let activeVoiceModifiers = flags.intersection([
                 .command, .control, .option, .shift, .function,
             ])
-            let allowed = hotkeyEngine.profile.trigger.modifierFlag
+            let allowed = profile.trigger.modifierFlag
             guard activeVoiceModifiers.subtracting(allowed).isEmpty else { return nil }
         }
         let phase: HotkeyGesturePhase = isPressed ? .pressed : .released
@@ -874,13 +1060,6 @@ final class VoiceRuntimeController {
         return phase
     }
 
-    private func cancelHotkeyGestureForChordIfNeeded() {
-        let action = hotkeyEngine.cancelForChord(isRecording: state == .recording)
-        guard action == .cancelRecording else { return }
-        DiagnosticLog.log("hotkey gesture cancelled because it became a chord")
-        cancelCurrentSession()
-        state = .cancelled
-    }
 }
 
 private extension VoiceRuntimeState {
@@ -893,19 +1072,6 @@ private extension VoiceRuntimeState {
 }
 
 private extension TriggerKey {
-    func accepts(keyCode: UInt16) -> Bool {
-        switch self {
-        case .option: keyCode == 58 || keyCode == 61
-        case .leftOption: keyCode == 58
-        case .rightOption: keyCode == 61
-        case .leftCommand: keyCode == 55
-        case .rightCommand: keyCode == 54
-        case .leftControl: keyCode == 59
-        case .rightControl: keyCode == 62
-        case .function: keyCode == 63
-        }
-    }
-
     var modifierFlag: NSEvent.ModifierFlags {
         switch self {
         case .option, .leftOption, .rightOption: .option

@@ -41,6 +41,9 @@ final class CompactRecorderHUD {
         model.levels = Array(repeating: 0.04, count: 11)
         smoothedLevel = 0.05
         model.partialText = ""
+        model.resultOriginal = ""
+        model.resultTranslation = nil
+        model.resultStatus = ""
         positionPanel()
         panel?.orderFrontRegardless()
         subtitlePanel?.orderOut(nil)
@@ -59,6 +62,17 @@ final class CompactRecorderHUD {
         guard !value.isEmpty else { return }
         model.partialText = value
         positionPanel()
+        subtitlePanel?.orderFrontRegardless()
+    }
+
+    func showResult(original: String, translation: String?, status: String) {
+        model.isBusy = true
+        model.statusText = status
+        model.resultOriginal = original
+        model.resultTranslation = translation
+        model.resultStatus = status
+        positionPanel()
+        panel?.orderFrontRegardless()
         subtitlePanel?.orderFrontRegardless()
     }
 
@@ -171,6 +185,9 @@ private final class RecorderHUDModel: ObservableObject {
     @Published var isBusy = false
     @Published var statusText = "Thinking…"
     @Published var partialText = ""
+    @Published var resultOriginal = ""
+    @Published var resultTranslation: String? = nil
+    @Published var resultStatus = ""
     @Published var style: HUDStyle = .glass
     @Published var chrome: HUDChrome = .borderless
     @Published var subtitleStyle: SubtitleStyle = .bubble
@@ -595,18 +612,58 @@ private struct SubtitleBubbleView: View {
 
     @ViewBuilder
     private var content: some View {
-        switch model.subtitleStyle {
-        case .bubble:
-            BubbleSubtitle(text: model.partialText)
-        case .fluidGlow:
-            FluidGlowSubtitle(text: model.partialText)
-        case .teleprompter:
-            TeleprompterSubtitle(text: model.partialText)
-        case .terminal:
-            TerminalSubtitle(text: model.partialText)
-        case .spatialBlur:
-            SpatialBlurSubtitle(text: model.partialText)
+        if !model.resultOriginal.isEmpty {
+            TranslationResultSubtitle(
+                original: model.resultOriginal,
+                translation: model.resultTranslation,
+                status: model.resultStatus
+            )
+        } else {
+            switch model.subtitleStyle {
+            case .bubble:
+                BubbleSubtitle(text: model.partialText)
+            case .fluidGlow:
+                FluidGlowSubtitle(text: model.partialText)
+            case .teleprompter:
+                TeleprompterSubtitle(text: model.partialText)
+            case .terminal:
+                TerminalSubtitle(text: model.partialText)
+            case .spatialBlur:
+                SpatialBlurSubtitle(text: model.partialText)
+            }
         }
+    }
+}
+
+private struct TranslationResultSubtitle: View {
+    let original: String
+    let translation: String?
+    let status: String
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 8) {
+            resultColumn(title: "原文", text: original)
+            resultColumn(title: "譯文", text: translation ?? status)
+        }
+        .padding(10)
+        .frame(width: 370, alignment: .top)
+        .background(Color.black.opacity(0.82), in: RoundedRectangle(cornerRadius: 12))
+        .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.white.opacity(0.14), lineWidth: 1))
+    }
+
+    private func resultColumn(title: String, text: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(.system(size: 10, weight: .semibold, design: .rounded))
+                .foregroundStyle(Color.white.opacity(0.58))
+            Text(text)
+                .font(.system(size: 12, weight: .medium, design: .rounded))
+                .foregroundStyle(.white)
+                .lineLimit(4)
+                .truncationMode(.tail)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 

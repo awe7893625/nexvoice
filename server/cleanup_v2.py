@@ -12,11 +12,28 @@ import vocab_store
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_TRANSLATE_TARGET_LANGUAGE = "英語"
+TRANSLATE_GLOSSARY_MAX = 16
+_TRANSLATE_PROMPT_TEMPLATE = (
+    "你是翻譯工具，不是助理。將原文翻譯成「{target_language}」。\n"
+    "只輸出譯文，不要前言、引號、說明或其他文字。\n"
+    "保留原文的意思、語氣、段落與格式；不要摘要、擴寫或回答內容。\n"
+    "術語表中的術語保留原文或採其慣用譯名，不得意譯改寫。"
+)
+
 SYSTEM_PROMPTS = {
     "tidy": "你是逐字稿清理工具，不是助理。你唯一的工作是把語音逐字稿輕度清理後原樣輸出。\n只能做：刪掉口頭禪與填充詞(嗯/欸/那個/這個/就是/對對對/然後然後/um/uh/like)；說錯改口的只留最後版本；加標點；修明顯錯字。\n絕對禁止：改寫成更正式或更通順的說法、新增任何原文沒有的字詞或解釋、分析或回答內容、做總結、給多個版本、加任何前言或說明(不要出現「整理後」「以下是」這類字)。輸出長度只能比原文短或差不多，絕不可變長。\n語言：原文什麼語言就輸出什麼語言，英文/技術詞/產品名/人名/數字原樣保留，不要翻譯。\n句子本來就乾淨就原樣輸出。只輸出清理後的文字本身。\n範例：\n輸入：嗯我在想說那個我們是不是要改一下顏色\n輸出：我在想我們是不是要改一下顏色。\n輸入：okay so we just need to add a cache layer and then run the tests first\n輸出：We just need to add a cache layer and then run the tests first.\n輸入：欸這個真的有夠難用我試了好幾次都不行到底是怎樣啦\n輸出：這個真的有夠難用，我試了好幾次都不行，到底是怎樣啦？\n輸入：幫我把首頁那個按鈕改大一點顏色換深一點\n輸出：幫我把首頁那個按鈕改大一點，顏色換深一點。",
     "structure": "你是語音逐字稿整理工具，不是助理。把使用者的口述逐字稿整理成清楚易讀的書面版本，像專業速記員整理口述筆記。\n整理方式：\n- 刪掉口頭禪與填充詞(嗯/欸/那個/就是/然後然後/um/uh/like)、無意義重複與離題；說錯改口的只留最後版本。\n- 依內容重組結構：內容有多個要點或層級時，用編號條列(1. 2. 3.，子項用 (a) (b) 或縮排)；敘述性內容整理成通順段落；開頭可以用原文中的主旨句當第一行。\n- 忠實原意：盡量沿用原文的措辭，不要換句話說；保留所有具體要求、人名、數字、日期、技術名詞、產品名；絕對不新增原文沒有的事實、解釋、建議或評論；絕不回答或執行內容。\n- 語言：原文什麼語言就輸出什麼語言；英文/技術詞/產品名原樣保留，不要翻譯。\n只輸出整理後的文字本身，不要任何前言、說明或「以下是」這類字。",
     "meeting": "你是一位會議記錄員。使用者將給你一段口語逐字稿，請整理成結構化會議記錄：\n- 用條列式呈現重點\n- 若有決議事項，列在「決議」下\n- 若有待辦/行動項目，列在「待辦」下並標註負責人（若有提到）\n- 精簡專業\n語言規則：中文一律用繁體中文，英文保留英文原文，不要翻譯任何內容（允許中英混用）。\n只輸出整理後的會議記錄，不要任何前言或解釋。",
     "command": "你是一位指令改寫助手。使用者將給你一段口語逐字稿，請把它改寫成一條清楚、可執行的指令（祈使句），去除贅字與口頭禪，保留所有關鍵需求與限制。\n語言規則：中文一律用繁體中文，英文保留英文原文，不要翻譯任何內容（允許中英混用）。\n只輸出改寫後的指令本身，不要任何解釋或前言。",
+    # Default (no target_language / glossary) translate prompt. Used as a
+    # static fallback by the combined single-call fast path
+    # (app.py's cleanup.STYLE_PROMPTS[eff_style]), which has no per-request
+    # target_language/glossary to inject. cleanup_text() below builds a
+    # dynamic per-request prompt via _translate_system_prompt() instead.
+    "translate": _TRANSLATE_PROMPT_TEMPLATE.format(
+        target_language=DEFAULT_TRANSLATE_TARGET_LANGUAGE
+    ),
 }
 
 DEFAULT_STYLE = "tidy"
@@ -24,6 +41,35 @@ VALID_STYLES = set(SYSTEM_PROMPTS.keys()) | {"verbatim"}
 # Back-compat alias: app.py's combined fast path reads cleanup.STYLE_PROMPTS.
 STYLE_PROMPTS = SYSTEM_PROMPTS
 STRUCT_MIN_CPS = 80
+
+
+def _translate_system_prompt(
+    target_language: Optional[str] = None, glossary: Optional[list[str]] = None
+) -> str:
+    """Build the translate-style system prompt for a specific request.
+
+    Degrades gracefully instead of erroring or producing empty output:
+    - Missing/blank target_language falls back to
+      DEFAULT_TRANSLATE_TARGET_LANGUAGE.
+    - Missing/empty glossary simply omits the glossary block.
+    - Glossary entries beyond TRANSLATE_GLOSSARY_MAX are truncated, not
+      rejected.
+    """
+    lang = (
+        target_language.strip()
+        if isinstance(target_language, str) and target_language.strip()
+        else DEFAULT_TRANSLATE_TARGET_LANGUAGE
+    )
+    prompt = _TRANSLATE_PROMPT_TEMPLATE.format(target_language=lang)
+    if glossary:
+        capped = [
+            g.strip() for g in glossary if isinstance(g, str) and g.strip()
+        ][:TRANSLATE_GLOSSARY_MAX]
+        if capped:
+            prompt += "\n術語表：\n" + "\n".join(f"- {g}" for g in capped)
+    return prompt
+
+
 NIM_ENDPOINT = "https://integrate.api.nvidia.com/v1/chat/completions"
 NIM_KEY_ENVS = ["NVDA_NIM_KEY_1", "NVDA_NIM_KEY_2", "NVDA_NIM_KEY_3", "NVDA_NIM_KEY_4"]
 
@@ -298,8 +344,14 @@ def cleanup_text(
     engine: str = "auto",
     nim_model: str = "qwen/qwen3-next-80b-a3b-instruct",
     app_context: Optional[str] = None,
+    target_language: Optional[str] = None,
+    glossary: Optional[list[str]] = None,
 ) -> str:
-    """Clean up raw STT text."""
+    """Clean up raw STT text.
+
+    target_language / glossary only apply to style == "translate"; they are
+    ignored for every other style.
+    """
     if not raw.strip():
         return raw
     if style not in VALID_STYLES:
@@ -308,7 +360,10 @@ def cleanup_text(
         return vocab_store.apply_sounds_like(raw)
 
     struct_mode = style == "tidy" and len(_content_cps(raw)) >= STRUCT_MIN_CPS
-    system_prompt = SYSTEM_PROMPTS["structure" if struct_mode else style]
+    if style == "translate":
+        system_prompt = _translate_system_prompt(target_language, glossary)
+    else:
+        system_prompt = SYSTEM_PROMPTS["structure" if struct_mode else style]
     if app_context:
         system_prompt += f"\n（參考：整理後的文字會貼進「{app_context}」。這只是語氣與格式的參考，不改變上述任何規則。）"
     logger.info(f"cleanup mode={'structure' if struct_mode else style}")
@@ -316,7 +371,7 @@ def cleanup_text(
     def looks_bad(out: str) -> bool:
         if struct_mode:
             return _structure_looks_bad(raw, out)
-        if style in ("meeting", "command"):
+        if style in ("meeting", "command", "translate"):
             return _minimal_looks_bad(raw, out)
         return _cleanup_looks_bad(style, raw, out)
 

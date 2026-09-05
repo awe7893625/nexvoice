@@ -115,19 +115,22 @@ class RuntimeContractTests(unittest.TestCase):
     def test_warm_final_model_calls_transcribe_wav_with_final_quality(self):
         calls = []
 
-        def fake_transcribe(audio, *, quality="final", vocab_terms=None):
-            calls.append((audio, quality))
+        def fake_transcribe(audio, *, quality="final", vocab_terms=None, skip_vad=False):
+            calls.append((audio, quality, skip_vad))
             return "warmup ok"
 
         with patch.object(runtime, "transcribe_wav", fake_transcribe):
             runtime._warm_final_model()
         self.assertEqual(len(calls), 1)
-        audio, quality = calls[0]
+        audio, quality, skip_vad = calls[0]
         self.assertIsInstance(audio, bytes)
         self.assertEqual(quality, "final")
+        # Warmup clips are internal synthetic audio: the VAD pre-gate would
+        # reject the steady warmup tone and silently skip model loading.
+        self.assertTrue(skip_vad)
 
     def test_warm_final_model_swallows_errors_instead_of_raising(self):
-        def boom(audio, *, quality="final", vocab_terms=None):
+        def boom(audio, *, quality="final", vocab_terms=None, skip_vad=False):
             raise RuntimeError("mlx-whisper is not installed")
 
         with patch.object(runtime, "transcribe_wav", boom):
@@ -136,19 +139,20 @@ class RuntimeContractTests(unittest.TestCase):
     def test_warm_partial_model_calls_transcribe_wav_with_partial_quality(self):
         calls = []
 
-        def fake_transcribe(audio, *, quality="final", vocab_terms=None):
-            calls.append((audio, quality))
+        def fake_transcribe(audio, *, quality="final", vocab_terms=None, skip_vad=False):
+            calls.append((audio, quality, skip_vad))
             return "warmup ok"
 
         with patch.object(runtime, "transcribe_wav", fake_transcribe):
             runtime._warm_partial_model()
         self.assertEqual(len(calls), 1)
-        audio, quality = calls[0]
+        audio, quality, skip_vad = calls[0]
         self.assertIsInstance(audio, bytes)
         self.assertEqual(quality, "partial")
+        self.assertTrue(skip_vad)
 
     def test_warm_partial_model_swallows_errors_instead_of_raising(self):
-        def boom(audio, *, quality="final", vocab_terms=None):
+        def boom(audio, *, quality="final", vocab_terms=None, skip_vad=False):
             raise RuntimeError("mlx-whisper is not installed")
 
         with patch.object(runtime, "transcribe_wav", boom):
@@ -157,13 +161,13 @@ class RuntimeContractTests(unittest.TestCase):
     def test_warm_models_warms_partial_before_final(self):
         calls = []
 
-        def fake_transcribe(audio, *, quality="final", vocab_terms=None):
-            calls.append(quality)
+        def fake_transcribe(audio, *, quality="final", vocab_terms=None, skip_vad=False):
+            calls.append((quality, skip_vad))
             return "warmup ok"
 
         with patch.object(runtime, "transcribe_wav", fake_transcribe):
             runtime._warm_models()
-        self.assertEqual(calls, ["partial", "final"])
+        self.assertEqual(calls, [("partial", True), ("final", True)])
 
     def test_health_identity_is_versioned_and_build_is_frozen(self):
         secret = b"test-secret"
@@ -264,7 +268,9 @@ class RuntimeContractTests(unittest.TestCase):
 
         fake = types.ModuleType("mlx_whisper")
         fake.transcribe = fake_transcribe
-        with patch.dict(sys.modules, {"mlx_whisper": fake}):
+        with patch.dict(os.environ, {"NEXVOICE_VAD": "0"}), patch.dict(
+            sys.modules, {"mlx_whisper": fake}
+        ):
             text = runtime.transcribe_wav(audio)
         self.assertEqual(seen["temperature"], runtime.TEMPERATURE_FALLBACK)
         self.assertFalse(seen["condition_on_previous_text"])
