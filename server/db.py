@@ -71,7 +71,7 @@ def init_db(db_path: str, defaults: dict[str, str] | None = None) -> None:
             "cleanup_enabled": "0",
             "privacy_mode": "0",
             "cloud_model": "gemini-2.5-flash",
-            "local_model": "mlx-community/whisper-large-v3-turbo",
+            "local_model": "eoleedi/Breeze-ASR-25-mlx",
             "cleanup_style": "tidy",
             "cleanup_engine": "local",
             "cleanup_nim_model": "qwen/qwen3-next-80b-a3b-instruct",

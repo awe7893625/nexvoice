@@ -30,7 +30,7 @@ class SettingsView:
     cleanup_enabled: bool = False
     privacy_mode: bool = False
     cloud_model: str = "gemini-2.5-flash"
-    local_model: str = "mlx-community/whisper-large-v3-turbo"
+    local_model: str = "eoleedi/Breeze-ASR-25-mlx"
     cleanup_style: str = "tidy"  # verbatim | tidy | meeting | command
     # Which engine cleans up the transcript text:
     #   auto   = Gemini -> NIM -> local ollama (fallback chain)
@@ -50,7 +50,7 @@ def load() -> SettingsView:
         cleanup_enabled=_truthy(raw.get("cleanup_enabled", "0")),
         privacy_mode=_truthy(raw.get("privacy_mode", "0")),
         cloud_model=raw.get("cloud_model", "gemini-2.5-flash"),
-        local_model=raw.get("local_model", "mlx-community/whisper-large-v3-turbo"),
+        local_model=raw.get("local_model", "eoleedi/Breeze-ASR-25-mlx"),
         cleanup_style=raw.get("cleanup_style", "tidy"),
         cleanup_engine=raw.get("cleanup_engine", "local"),
         cleanup_nim_model=raw.get(

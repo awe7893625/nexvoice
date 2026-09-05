@@ -103,4 +103,46 @@ final class HotkeyProfileTests: XCTestCase {
             XCTAssertEqual(store.load(), .defaultProfile)
         }
     }
+
+    func testHotkeyBindingsUseFreshProfileForSequentialWrites() {
+        var box = HotkeyProfile(trigger: .leftOption, behavior: .toggle, keyCode: 49)
+        let bindings = HotkeyProfile.makeHotkeyBindings(
+            getProfile: { box },
+            setProfile: { box = $0 }
+        )
+
+        bindings.trigger.wrappedValue = .rightOption
+        bindings.keyCode.wrappedValue = nil
+
+        XCTAssertEqual(box.trigger, .rightOption)
+        XCTAssertNil(box.keyCode)
+    }
+
+    func testHotkeyBindingsComposeInReverseWriteOrder() {
+        var box = HotkeyProfile(trigger: .leftOption, behavior: .pushToTalk)
+        let bindings = HotkeyProfile.makeHotkeyBindings(
+            getProfile: { box },
+            setProfile: { box = $0 }
+        )
+
+        bindings.keyCode.wrappedValue = 49
+        bindings.trigger.wrappedValue = .rightOption
+
+        XCTAssertEqual(box.trigger, .rightOption)
+        XCTAssertNil(box.keyCode)
+    }
+
+    func testHotkeyBindingsPreserveOptionTriggerAcrossMenuWrites() {
+        var box = HotkeyProfile(trigger: .rightOption, behavior: .toggle, keyCode: 49)
+        let bindings = HotkeyProfile.makeHotkeyBindings(
+            getProfile: { box },
+            setProfile: { box = $0 }
+        )
+
+        bindings.trigger.wrappedValue = .option
+        bindings.keyCode.wrappedValue = nil
+
+        XCTAssertEqual(box.trigger, .option)
+        XCTAssertNil(box.keyCode)
+    }
 }

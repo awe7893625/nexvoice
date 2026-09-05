@@ -267,7 +267,7 @@ private struct HomePage: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 pageTitle("首頁", subtitle: model.isEnabled
-                          ? model.hotkeyProfile.userInstruction
+                          ? model.productPreferences.dictate.userInstruction
                           : "與 Typeless 並存：一次只啟用一個語音工具")
 
                 if !model.permissionsReady {
@@ -337,7 +337,7 @@ private struct HomePage: View {
                 // fixedSize pins the row to the tallest card's intrinsic height
                 // so a two-line tip no longer leaves its neighbours short.
                 HStack(alignment: .top, spacing: 12) {
-                    tipCard(symbol: "mic.fill", title: "聽寫", text: model.hotkeyProfile.userInstruction)
+                    tipCard(symbol: "mic.fill", title: "聽寫", text: model.productPreferences.dictate.userInstruction)
                     tipCard(symbol: "xmark.circle", title: "取消", text: "Esc 或 HUD 上的 ✕")
                     tipCard(symbol: "doc.on.clipboard", title: "重貼", text: "⌥⌘V 重貼上一筆")
                 }
@@ -349,11 +349,11 @@ private struct HomePage: View {
                             .font(.system(size: 14, weight: .bold))
                             .foregroundStyle(NV.ink)
                         Spacer()
-                        Text(model.hotkeyProfile.bindingName)
+                        Text(model.productPreferences.dictate.bindingName)
                             .font(.system(size: 12, weight: .semibold, design: .rounded))
                             .foregroundStyle(NV.blue)
                     }
-                    Text(model.hotkeyProfile.behavior == .toggle
+                    Text(model.productPreferences.dictate.behavior == .toggle
                          ? "Toggle：按下開始，再按一下停止"
                          : "Push-to-talk：按住開始，放開立即停止並轉錄")
                         .font(.system(size: 12.5))
@@ -385,12 +385,22 @@ private struct HomePage: View {
                         }
 
                         VStack(alignment: .leading, spacing: 10) {
-                            Text(model.lastTranscript)
-                                .font(.system(size: 14, weight: .regular))
-                                .foregroundStyle(NV.ink)
-                                .lineSpacing(5)
-                                .textSelection(.enabled)
-                                .frame(maxWidth: .infinity, alignment: .leading)
+                            if let translation = model.lastTranslation {
+                                resultTextBlock(title: "原文", text: model.lastOriginalTranscript)
+                                resultTextBlock(title: "譯文", text: translation)
+                            } else if model.lastTranslationFailed {
+                                resultTextBlock(title: "原文", text: model.lastOriginalTranscript)
+                                Text("翻譯失敗，已貼上原文")
+                                    .font(.system(size: 12, weight: .semibold))
+                                    .foregroundStyle(NV.warn)
+                            } else {
+                                Text(model.lastTranscript)
+                                    .font(.system(size: 14, weight: .regular))
+                                    .foregroundStyle(NV.ink)
+                                    .lineSpacing(5)
+                                    .textSelection(.enabled)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            }
                         }
                         .padding(14)
                         .background(
@@ -424,6 +434,20 @@ private struct HomePage: View {
                 }
             }
             .padding(28)
+        }
+    }
+
+    private func resultTextBlock(title: String, text: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(NV.secondary)
+            Text(text)
+                .font(.system(size: 14, weight: .regular))
+                .foregroundStyle(NV.ink)
+                .lineSpacing(5)
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
@@ -912,6 +936,16 @@ private struct SettingsPage: View {
                 .frame(width: 170)
             })
             Divider().overlay(NV.hairline)
+            settingsRow(title: "翻譯貼上內容", detail: "選擇貼上的文字內容", trailing: {
+                Picker("翻譯貼上內容", selection: $model.productPreferences.translationPasteContent) {
+                    ForEach(TranslationPasteContent.allCases, id: \.self) { content in
+                        Text(content.displayName).tag(content)
+                    }
+                }
+                .labelsHidden()
+                .frame(width: 170)
+            })
+            Divider().overlay(NV.hairline)
             toggleRow(title: "互動聲音", detail: "開始／停止時播放提示音", isOn: $model.productPreferences.interactionSounds)
             Divider().overlay(NV.hairline)
             toggleRow(title: "語音輸入時靜音", detail: "錄音期間暫停其他系統音訊", isOn: $model.productPreferences.muteOtherAudio)
@@ -945,42 +979,24 @@ private struct SettingsPage: View {
                 title: "錄音按鍵",
                 detail: "點擊後直接按下 Option／Command／Control／Fn 設定",
                 trailing: {
-                    HotkeyCaptureButton(trigger: Binding(
-                        get: { model.hotkeyProfile.trigger },
-                        set: { trigger in
-                            model.hotkeyProfile = HotkeyProfile(
-                                trigger: trigger,
-                                behavior: model.hotkeyProfile.behavior,
-                                keyCode: nil
-                            )
-                        }
-                    ), keyCode: Binding(
-                        get: { model.hotkeyProfile.keyCode },
-                        set: { code in
-                            model.hotkeyProfile = HotkeyProfile(
-                                trigger: model.hotkeyProfile.trigger,
-                                behavior: model.hotkeyProfile.behavior,
-                                keyCode: code
-                            )
-                        }
-                    ))
+                    let bindings = HotkeyProfile.makeHotkeyBindings(
+                        getProfile: { model.productPreferences.dictate },
+                        setProfile: { model.productPreferences.dictate = $0 }
+                    )
+                    HotkeyCaptureButton(trigger: bindings.trigger, keyCode: bindings.keyCode)
                 }
             )
             Divider().overlay(NV.hairline)
             settingsRow(
                 title: "操作方式",
-                detail: model.hotkeyProfile.behavior == .toggle
+                detail: model.productPreferences.dictate.behavior == .toggle
                     ? "按一下開始，再按一下停止"
                     : "按住錄音，放開後停止並轉錄",
                 trailing: {
                     Picker("操作方式", selection: Binding(
-                        get: { model.hotkeyProfile.behavior },
+                        get: { model.productPreferences.dictate.behavior },
                         set: { behavior in
-                            model.hotkeyProfile = HotkeyProfile(
-                                trigger: model.hotkeyProfile.trigger,
-                                behavior: behavior,
-                                keyCode: model.hotkeyProfile.keyCode
-                            )
+                            model.productPreferences.dictate = model.productPreferences.dictate.with(behavior: behavior)
                         }
                     )) {
                         ForEach(TriggerBehavior.allCases, id: \.self) { behavior in
@@ -998,8 +1014,6 @@ private struct SettingsPage: View {
     private var modeHotkeysCard: some View {
         VStack(alignment: .leading, spacing: 0) {
             cardHeader("快捷鍵模式", "每個模式可綁不同按鍵與觸發方式")
-            modeHotkeyRow(.dictate, title: "聽寫", detail: "按下開始／停止並貼上")
-            Divider().overlay(NV.hairline)
             modeHotkeyRow(.translate, title: "翻譯", detail: "按下開始／停止翻譯到目標語言")
             Divider().overlay(NV.hairline)
             modeHotkeyRow(.ask, title: "隨便問", detail: "按下開始／停止，回答目前問題")
@@ -1379,8 +1393,11 @@ private struct SettingsPage: View {
 
     @ViewBuilder
     private func modeHotkeyRow(_ mode: VoiceMode, title: String, detail: String) -> some View {
-        let profile = mode == .dictate ? model.productPreferences.dictate
-            : mode == .translate ? model.productPreferences.translate : model.productPreferences.ask
+        let profile = modeProfile(mode)
+        let bindings = HotkeyProfile.makeHotkeyBindings(
+            getProfile: { modeProfile(mode) },
+            setProfile: { setModeProfile(mode, $0) }
+        )
         HStack(alignment: .center, spacing: 12) {
             VStack(alignment: .leading, spacing: 3) {
                 Text(title).font(.system(size: 13.5, weight: .semibold)).foregroundStyle(NV.ink)
@@ -1391,14 +1408,8 @@ private struct SettingsPage: View {
             Spacer()
             VStack(alignment: .trailing, spacing: 5) {
                 HotkeyCaptureButton(
-                    trigger: Binding(get: { profile.trigger }, set: { newTrigger in
-                        var next = profile; next = HotkeyProfile(trigger: newTrigger, behavior: next.behavior)
-                        setModeProfile(mode, next)
-                    }),
-                    keyCode: Binding(get: { profile.keyCode }, set: { code in
-                        let next = HotkeyProfile(trigger: profile.trigger, behavior: profile.behavior, keyCode: code)
-                        setModeProfile(mode, next)
-                    })
+                    trigger: bindings.trigger,
+                    keyCode: bindings.keyCode
                 )
                 Picker("模式", selection: Binding(get: { profile.behavior }, set: { behavior in
                     setModeProfile(mode, HotkeyProfile(trigger: profile.trigger, behavior: behavior, keyCode: profile.keyCode))
@@ -1408,6 +1419,14 @@ private struct SettingsPage: View {
             }
         }
         .padding(.vertical, 12)
+    }
+
+    private func modeProfile(_ mode: VoiceMode) -> HotkeyProfile {
+        switch mode {
+        case .dictate: model.productPreferences.dictate
+        case .translate: model.productPreferences.translate
+        case .ask: model.productPreferences.ask
+        }
     }
 
     private func setModeProfile(_ mode: VoiceMode, _ profile: HotkeyProfile) {
@@ -1459,8 +1478,19 @@ private struct HotkeyCaptureButton: View {
     @State private var capturing = false
 
     var body: some View {
-        Button(capturing ? "請按按鍵…" : (keyCode.map(HotkeyDisplay.name) ?? trigger.displayName)) {
-            capturing = true
+        Menu {
+            ForEach(TriggerKey.allCases, id: \.self) { option in
+                Button(option.displayName) {
+                    trigger = option
+                    capturing = false
+                }
+            }
+            Divider()
+            Button("擷取實體鍵…") {
+                capturing = true
+            }
+        } label: {
+            Text(capturing ? "請按按鍵…" : (keyCode.map(HotkeyDisplay.name) ?? trigger.displayName))
         }
         .buttonStyle(NVSecondaryButton())
         .background(
@@ -1496,14 +1526,11 @@ private struct HotkeyCaptureField: NSViewRepresentable {
             keyCode = code
             isCapturing = false
         }
-        view.onFlags = { flags in
+        view.onFlags = { code in
             guard isCapturing else { return }
+            guard let capturedTrigger = TriggerKey(keyCode: code) else { return }
             keyCode = nil
-            if flags.contains(.option) { trigger = .option }
-            else if flags.contains(.command) { trigger = .leftCommand }
-            else if flags.contains(.control) { trigger = .leftControl }
-            else if flags.contains(.function) { trigger = .function }
-            else { return }
+            trigger = capturedTrigger
             isCapturing = false
         }
         return view
@@ -1515,12 +1542,12 @@ private struct HotkeyCaptureField: NSViewRepresentable {
 }
 
 private final class CaptureNSView: NSView {
-    var onFlags: ((NSEvent.ModifierFlags) -> Void)?
+    var onFlags: ((UInt16) -> Void)?
     var onKey: ((UInt16) -> Void)?
     override var acceptsFirstResponder: Bool { true }
     override func becomeFirstResponder() -> Bool { true }
     override func keyDown(with event: NSEvent) { onKey?(event.keyCode) }
-    override func flagsChanged(with event: NSEvent) { onFlags?(event.modifierFlags) }
+    override func flagsChanged(with event: NSEvent) { onFlags?(event.keyCode) }
 }
 
 private extension HotkeyOwner {

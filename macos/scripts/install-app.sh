@@ -185,3 +185,60 @@ if [[ -e "$BACKUP" ]]; then
   echo "previous version: $BACKUP"
 fi
 codesign -dvvv "$CANONICAL" 2>&1 | grep -E "TeamIdentifier|CDHash|Signature="
+
+# The App install transaction has already succeeded by this point. Gateway
+# and App are independent services, so a gateway verification failure must
+# not roll back the successfully installed App; report the manual recovery.
+gateway_verification_failure() {
+  echo "error: $1" >&2
+  echo "App 已成功安裝（不 rollback，gateway 與 app 是獨立服務）；gateway 未驗證重啟，舊進程可能在服務過期代碼；手動補救（失敗的是哪個 label 就重啟哪個）：launchctl kickstart -k gui/\$UID/ai.nexvoice.gateway 或 gui/\$UID/ai.nexvoice.gateway.tailscale" >&2
+  exit 1
+}
+
+# 票F (2026-08-30): the gateway LaunchAgents are long-lived uvicorn processes
+# serving server/ straight from the checkout. Reinstalling without restarting
+# them leaves stale code serving 5111 for days (real incident 2026-08-30: the
+# 08-25 gateway kept answering with pre-translate-style code after ticket B2
+# shipped, so every local-gateway translation failed).
+GATEWAY_INSTALLED=0
+GATEWAY_PID_BEFORE=""
+for GATEWAY_LABEL in ai.nexvoice.gateway ai.nexvoice.gateway.tailscale; do
+  if launchctl print "gui/$UID/$GATEWAY_LABEL" >/dev/null 2>&1; then
+    if [[ "$GATEWAY_INSTALLED" == "0" ]]; then
+      GATEWAY_PID_BEFORE=$(lsof -nP -ti :5111 2>/dev/null || true)
+    fi
+    GATEWAY_INSTALLED=1
+    echo "restarting $GATEWAY_LABEL to pick up current server code…"
+    if ! launchctl kickstart -k "gui/$UID/$GATEWAY_LABEL" >/dev/null 2>&1; then
+      gateway_verification_failure "kickstart $GATEWAY_LABEL failed"
+    fi
+  fi
+done
+
+if [[ "$GATEWAY_INSTALLED" == "0" ]]; then
+  echo "skipped: gateway LaunchAgent not installed (external prerequisite)"
+else
+  GATEWAY_PID_AFTER=""
+  for _ in {1..20}; do
+    GATEWAY_PID_AFTER=$(lsof -nP -ti :5111 2>/dev/null || true)
+    if [[ -n "$GATEWAY_PID_AFTER" && "$GATEWAY_PID_AFTER" != "$GATEWAY_PID_BEFORE" ]]; then
+      break
+    fi
+    sleep 0.5
+  done
+  if [[ -z "$GATEWAY_PID_AFTER" || "$GATEWAY_PID_AFTER" == "$GATEWAY_PID_BEFORE" ]]; then
+    gateway_verification_failure "gateway restart did not replace the 5111 listener (pid=${GATEWAY_PID_AFTER:-none})"
+  fi
+
+  GATEWAY_HEALTH=""
+  for _ in {1..20}; do
+    GATEWAY_HEALTH=$(curl -s -m 2 http://127.0.0.1:5111/health 2>/dev/null || true)
+    [[ "$GATEWAY_HEALTH" == *'"status":"ok"'* ]] && break
+    sleep 0.5
+  done
+  if [[ "$GATEWAY_HEALTH" == *'"status":"ok"'* ]]; then
+    echo "gateway restarted and healthy"
+  else
+    gateway_verification_failure "gateway /health not green after restart; it may still serve stale code"
+  fi
+fi

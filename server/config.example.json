@@ -2,7 +2,7 @@
   "port": 5111,
   "gemini_api_key_env": "GEMINI_API_KEY",
   "cloud_model": "gemini-2.5-flash",
-  "local_model": "mlx-community/whisper-large-v3-turbo",
+  "local_model": "eoleedi/Breeze-ASR-25-mlx",
   "cleanup_ollama_model": "qwen3:4b-instruct",
   "db_path": "data/nexvoice.db",
   "cleanup_style": "tidy",

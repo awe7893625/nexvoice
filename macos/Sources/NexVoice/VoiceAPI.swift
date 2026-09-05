@@ -237,6 +237,54 @@ struct VoiceAPI {
         return nil
     }
 
+    /// Translates a completed transcript through the cloud-first chain. The
+    /// local gateway uses the same authenticated cleanup endpoint as the
+    /// existing fallback lane; its translation style is supplied by the
+    /// gateway runtime.
+    func translate(
+        _ text: String,
+        targetLanguage: String,
+        glossary: [String] = [],
+        allowCloud: Bool = true
+    ) async -> String? {
+        let system = Self.translationSystemPrompt(
+            targetLanguage: targetLanguage,
+            glossary: Array(glossary.prefix(16))
+        )
+        if allowCloud {
+            if let groq = try? await chatWithGroq(system: system, user: text),
+               !groq.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                return groq
+            }
+            if let gemini = try? await chatWithGemini(system: system, user: text),
+               !gemini.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                return gemini
+            }
+        }
+        if let local = try? await translateWithLocalGateway(
+            text,
+            targetLanguage: targetLanguage,
+            glossary: Array(glossary.prefix(16))
+        ), !local.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return local
+        }
+        return nil
+    }
+
+    static func translationSystemPrompt(targetLanguage: String, glossary: [String]) -> String {
+        var prompt = """
+        你是翻譯工具，不是助理。將原文翻譯成「\(targetLanguage)」。
+        只輸出譯文，不要前言、引號、說明或其他文字。
+        保留原文的意思、語氣、段落與格式；不要摘要、擴寫或回答內容。
+        術語表中的術語保留原文或採其慣用譯名，不得意譯改寫。
+        """
+        let cappedGlossary = Array(glossary.prefix(16))
+        if !cappedGlossary.isEmpty {
+            prompt += "\n術語表：\n" + cappedGlossary.map { "- \($0)" }.joined(separator: "\n")
+        }
+        return prompt
+    }
+
     /// Appends a reference-only line naming the destination app, mirroring
     /// server/cleanup_v2.py's `app_context` handling exactly so both lanes
     /// behave the same way. Explicitly "reference only, does not change any
@@ -399,10 +447,22 @@ struct VoiceAPI {
     /// `_verify_hmac_request`/`LocalAuthMiddleware`) rather than a plain
     /// bearer token, so a request can't be replayed and a response can't be
     /// forged by a local squatter on the same port.
-    static func localGatewayRequestObject(text: String, appContext: String?) -> [String: Any] {
-        var body: [String: Any] = ["text": text, "style": "tidy"]
+    static func localGatewayRequestObject(
+        text: String,
+        appContext: String?,
+        style: String = "tidy",
+        targetLanguage: String? = nil,
+        glossary: [String] = []
+    ) -> [String: Any] {
+        var body: [String: Any] = ["text": text, "style": style]
         if let appContext, !appContext.isEmpty {
             body["app_context"] = appContext
+        }
+        if let targetLanguage, !targetLanguage.isEmpty {
+            body["target_language"] = targetLanguage
+        }
+        if !glossary.isEmpty {
+            body["glossary"] = Array(glossary.prefix(16))
         }
         return body
     }
@@ -467,6 +527,57 @@ struct VoiceAPI {
             DiagnosticLog.log("cloud cleanup unavailable, local-gateway fallback failed: \(error.localizedDescription)")
             throw error
         }
+    }
+
+    private func translateWithLocalGateway(
+        _ text: String,
+        targetLanguage: String,
+        glossary: [String]
+    ) async throws -> String {
+        guard text.utf8.count <= Self.maxTranscriptBytes else {
+            throw VoiceAPIError.responseTooLarge
+        }
+        guard let token = GatewayToken.current else {
+            throw VoiceAPIError.serviceUnavailable("no gateway token")
+        }
+        let path = "/api/cleanup"
+        let body = try JSONSerialization.data(
+            withJSONObject: Self.localGatewayRequestObject(
+                text: text,
+                appContext: nil,
+                style: "translate",
+                targetLanguage: targetLanguage,
+                glossary: glossary
+            )
+        )
+        var request = URLRequest(url: URL(string: "http://127.0.0.1:5111\(path)")!)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        let nonce = LocalRuntimeChallenge.nonce()
+        request.setValue(nonce, forHTTPHeaderField: "X-NexVoice-Nonce")
+        request.setValue(
+            LocalRuntimeChallenge.requestProof(
+                secret: token, method: "POST", path: path, nonce: nonce, body: body
+            ),
+            forHTTPHeaderField: "X-NexVoice-Proof"
+        )
+        request.httpBody = body
+
+        let (data, response) = try await limitedData(for: request, using: localGatewaySession)
+        try validate(response)
+        guard let http = response as? HTTPURLResponse,
+              LocalRuntimeChallenge.verify(
+                  proofBase64: http.value(forHTTPHeaderField: "X-NexVoice-Response-Proof"),
+                  secret: token,
+                  message: LocalRuntimeChallenge.gatewayResponseMessage(
+                      method: "POST", path: path, nonce: nonce, statusCode: http.statusCode
+                  )
+              )
+        else { throw VoiceAPIError.invalidResponse }
+
+        let translated = try Self.parseLocalGatewayResponse(data)
+        DiagnosticLog.log("cloud translation unavailable, using local-gateway fallback")
+        return translated
     }
 
     private func validate(_ response: URLResponse) throws {

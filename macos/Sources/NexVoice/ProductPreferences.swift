@@ -10,6 +10,20 @@ enum VoiceMode: String, CaseIterable, Codable, Sendable {
     }
 }
 
+enum TranslationPasteContent: String, CaseIterable, Codable, Sendable {
+    case translation
+    case original
+    case both
+
+    var displayName: String {
+        switch self {
+        case .translation: "譯文"
+        case .original: "原文"
+        case .both: "兩者"
+        }
+    }
+}
+
 /// Retired 2026-07-25 (Rain: "又細又長又醜"): ink/spectrum/floatVoice/ekg/
 /// silk/cascade/meteor were all variations on a thin pale line or a scatter of
 /// dim dots -- the two things that read as unfinished on a black capsule.
@@ -133,6 +147,7 @@ struct ProductPreferences: Codable, Equatable, Sendable {
     var ask: HotkeyProfile = HotkeyProfile(trigger: .function, behavior: .toggle)
     var interfaceLanguage = "繁體中文（台灣）"
     var translationTarget = "英語（美國）"
+    var translationPasteContent: TranslationPasteContent = .translation
     var interactionSounds = true
     var muteOtherAudio = true
     var showDockIcon = true
@@ -145,7 +160,7 @@ struct ProductPreferences: Codable, Equatable, Sendable {
     var appTheme: AppTheme = .pristine
 
     private enum CodingKeys: String, CodingKey {
-        case dictate, translate, ask, interfaceLanguage, translationTarget
+        case dictate, translate, ask, interfaceLanguage, translationTarget, translationPasteContent
         case interactionSounds, muteOtherAudio, showDockIcon
         case fillerWordCleanupEnabled, selfCorrectionCleanupEnabled
         case hudStyle, hudChrome, liveCaptionsEnabled, subtitleStyle, appTheme
@@ -162,6 +177,11 @@ struct ProductPreferences: Codable, Equatable, Sendable {
             ?? HotkeyProfile(trigger: .function, behavior: .toggle)
         interfaceLanguage = try values.decodeIfPresent(String.self, forKey: .interfaceLanguage) ?? "繁體中文（台灣）"
         translationTarget = try values.decodeIfPresent(String.self, forKey: .translationTarget) ?? "英語（美國）"
+        if let rawTranslationPasteContent = try values.decodeIfPresent(String.self, forKey: .translationPasteContent) {
+            translationPasteContent = TranslationPasteContent(rawValue: rawTranslationPasteContent) ?? .translation
+        } else {
+            translationPasteContent = .translation
+        }
         interactionSounds = try values.decodeIfPresent(Bool.self, forKey: .interactionSounds) ?? true
         muteOtherAudio = try values.decodeIfPresent(Bool.self, forKey: .muteOtherAudio) ?? true
         showDockIcon = try values.decodeIfPresent(Bool.self, forKey: .showDockIcon) ?? true
@@ -197,11 +217,42 @@ struct ProductPreferences: Codable, Equatable, Sendable {
 enum ProductPreferencesStore {
     private static let key = "nexvoice.product.preferences"
     static func load(_ defaults: UserDefaults = .standard) -> ProductPreferences {
-        guard let data = defaults.data(forKey: key),
-              let value = try? JSONDecoder().decode(ProductPreferences.self, from: data)
-        else { return ProductPreferences() }
-        return value
+        if let data = defaults.data(forKey: key),
+           let value = try? JSONDecoder().decode(ProductPreferences.self, from: data) {
+            return value
+        }
+        // 型別防禦（真實事故 2026-08-29）：blob 若被外部寫成字串而非 Data，
+        // data(forKey:) 會回 nil 並靜默丟掉使用者全部設定；字串型別也要能讀回。
+        if let raw = defaults.string(forKey: key),
+           let data = raw.data(using: .utf8),
+           let value = try? JSONDecoder().decode(ProductPreferences.self, from: data) {
+            return value
+        }
+        return ProductPreferences()
     }
+
+    /// 票E（2026-08-30）：三個模式熱鍵以 ProductPreferences 為唯一來源（SSOT）。
+    /// 舊版主要觸發鍵存在 HotkeyProfileStore（"nexvoice.hotkey.profile"），載入時
+    /// 一次性搬進 .dictate 並落盤；之後該 key 不再被讀寫（舊檔保留不刪）。
+    /// 舊值優先於 blob：歷史上它才是引擎真正使用的設定，blob 的 dictate 列是死的。
+    /// marker 保證遷移只跑一次——否則使用者遷移後在 UI 改鍵，下次啟動會被
+    /// 留在磁碟上的舊值蓋回去。
+    static func resolvingLegacyRecordKey(_ defaults: UserDefaults = .standard) -> ProductPreferences {
+        if defaults.bool(forKey: legacyMigrationDoneKey) { return load(defaults) }
+        defaults.set(true, forKey: legacyMigrationDoneKey)
+        var prefs = load(defaults)
+        let store = HotkeyProfileStore(defaults: defaults)
+        guard store.hasStoredProfile() else { return prefs }
+        let legacy = store.load()
+        if prefs.dictate != legacy {
+            prefs.dictate = legacy
+            save(prefs, defaults)
+        }
+        return prefs
+    }
+
+    private static let legacyMigrationDoneKey = "nexvoice.hotkey.legacyMigrated"
+
     static func save(_ value: ProductPreferences, _ defaults: UserDefaults = .standard) {
         if let data = try? JSONEncoder().encode(value) { defaults.set(data, forKey: key) }
     }

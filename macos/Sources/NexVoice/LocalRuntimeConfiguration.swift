@@ -3,7 +3,7 @@ import Foundation
 enum LocalRuntimeConfiguration {
     static let modelKey = "nexvoice.local.model"
     static let endpointKey = "nexvoice.local.endpoint"
-    static let defaultModel = "mlx-community/whisper-large-v3-turbo"
+    static let defaultModel = "eoleedi/Breeze-ASR-25-mlx"
     static let defaultEndpoint = "http://127.0.0.1:5112"
 
     static var model: String {

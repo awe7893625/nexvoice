@@ -17,7 +17,10 @@ This repository is an open-source release candidate under active hardening. The 
 ## Requirements
 
 - macOS 14 or newer
-- Apple Silicon recommended; 16 GB RAM minimum for the turbo local model
+- Apple Silicon recommended; 16 GB RAM minimum. The default local model is
+  Breeze ASR 25 (2.9 GB of weights, tuned for Traditional Chinese and
+  Mandarin-English code-switching). Set `NEXVOICE_MLX_MODEL=mlx-community/whisper-large-v3-turbo`
+  for the smaller, faster, less accurate model — see [docs/LOCAL_MODELS.md](docs/LOCAL_MODELS.md).
 - Microphone and Accessibility permission, granted manually in System Settings
 
 ## Quick install
