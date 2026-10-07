@@ -19,6 +19,7 @@ import logging
 import math
 import os
 import re
+import sys
 import tempfile
 import threading
 import time
@@ -797,29 +798,44 @@ def _consume_unloaded(model: str) -> bool:
         return False
 
 
-def _release_mlx_memory() -> None:
-    gc.collect()
-    try:
-        import mlx.core as mx  # type: ignore
-    except ImportError:
+def _mlx_clear_cache() -> None:
+    """Return MLX's buffer cache to the OS, if MLX is loaded in this process.
+
+    Looks MLX up in sys.modules instead of importing it: if no model was ever
+    loaded there is nothing to clear, and importing (or re-importing) MLX's
+    native extension from the unloader thread is never safe.
+    """
+    mx = sys.modules.get("mlx.core")
+    if mx is None:
         return
     clear_cache = getattr(mx, "clear_cache", None)
     if clear_cache is None:
         clear_cache = getattr(getattr(mx, "metal", None), "clear_cache", None)
     if clear_cache is not None:
-        try:
-            clear_cache()
-        except Exception:  # pragma: no cover - best-effort only
-            pass
+        clear_cache()
+
+
+# Release hooks; tests replace these so they never touch MLX/Metal.
+_GC_COLLECT = gc.collect
+_CLEAR_CACHE = _mlx_clear_cache
+
+
+def _loaded_model_holder():
+    """mlx-whisper's single-model ModelHolder, only if already imported."""
+    module = sys.modules.get("mlx_whisper.transcribe")
+    return getattr(module, "ModelHolder", None) if module is not None else None
 
 
 def maybe_unload_idle_models() -> bool:
     """Drop cached ASR models after an idle period; return True if unloaded.
 
-    Never blocks a transcription: skips while a request is in flight or the
-    model lock is held. Both the final and the tiny partial model are dropped,
-    including mlx-whisper's own ModelHolder reference (otherwise the last-used
-    model would stay resident). The next request reloads lazily.
+    Never blocks or overlaps a transcription: it skips while a request is in
+    flight or the model lock is held, and everything below -- dropping the
+    references, gc and the MLX cache clear -- runs while holding _MODEL_LOCK,
+    the same lock every mlx_whisper.transcribe call runs under. Both the final
+    and the tiny partial model are dropped, including mlx-whisper's own
+    ModelHolder reference (otherwise the last-used model would stay resident).
+    The next request reloads lazily.
     """
     limit = _idle_unload_seconds()
     if limit <= 0:
@@ -831,14 +847,10 @@ def maybe_unload_idle_models() -> bool:
         return False
     try:
         with _IDLE_STATE_LOCK:
-            if _IN_FLIGHT > 0:
+            if _IN_FLIGHT > 0 or _CLOCK() - _LAST_USED < limit:
                 return False
             idle = _CLOCK() - _LAST_USED
-        holder = None
-        try:
-            holder = importlib.import_module("mlx_whisper.transcribe").ModelHolder
-        except (AttributeError, ImportError):
-            holder = None
+        holder = _loaded_model_holder()
         if not _MODEL_CACHE and (holder is None or getattr(holder, "model", None) is None):
             return False
         started = time.monotonic()
@@ -847,7 +859,11 @@ def maybe_unload_idle_models() -> bool:
         if holder is not None:
             holder.model = None
             holder.model_path = None
-        _release_mlx_memory()
+        _GC_COLLECT()
+        try:
+            _CLEAR_CACHE()
+        except Exception as exc:  # pragma: no cover - best-effort only
+            print(f"idle-unload: clear_cache failed: {type(exc).__name__}: {exc}", flush=True)
         with _IDLE_STATE_LOCK:
             _UNLOADED_MODELS.update(names)
         print(
@@ -860,12 +876,39 @@ def maybe_unload_idle_models() -> bool:
         _MODEL_LOCK.release()
 
 
-def _idle_unload_loop() -> None:
-    while not _SHUTTING_DOWN.wait(_IDLE_CHECK_INTERVAL_SEC):
-        try:
-            maybe_unload_idle_models()
-        except Exception as exc:  # pragma: no cover - never kill the daemon
-            print(f"idle-unload: failed: {type(exc).__name__}: {exc}", flush=True)
+class IdleUnloader:
+    """Background thread that calls maybe_unload_idle_models periodically.
+
+    Stoppable via stop(); also exits when the runtime is shutting down.
+    """
+
+    def __init__(self, interval: float = _IDLE_CHECK_INTERVAL_SEC) -> None:
+        self.interval = interval
+        self._stop = threading.Event()
+        self._thread = threading.Thread(
+            target=self._run, name="nexvoice-idle-unload", daemon=True
+        )
+
+    def start(self) -> "IdleUnloader":
+        self._thread.start()
+        return self
+
+    def stop(self, timeout: float | None = 5.0) -> None:
+        self._stop.set()
+        if self._thread.is_alive():
+            self._thread.join(timeout)
+
+    def is_alive(self) -> bool:
+        return self._thread.is_alive()
+
+    def _run(self) -> None:
+        while not self._stop.wait(self.interval):
+            if _SHUTTING_DOWN.is_set():
+                return
+            try:
+                maybe_unload_idle_models()
+            except Exception as exc:  # pragma: no cover - never kill the thread
+                print(f"idle-unload: failed: {type(exc).__name__}: {exc}", flush=True)
 
 
 def transcribe_wav(
@@ -1149,5 +1192,5 @@ if __name__ == "__main__":
     )
     threading.Thread(target=watch_parent, args=(httpd,), daemon=True).start()
     threading.Thread(target=_warm_models, daemon=True).start()
-    threading.Thread(target=_idle_unload_loop, daemon=True).start()
+    IdleUnloader().start()
     httpd.serve_forever(poll_interval=0.25)
