@@ -18,6 +18,10 @@ struct VocabEntry: Codable, Equatable, Identifiable, Sendable {
 /// so recording never depends on a network round trip.
 enum VocabStore {
     private static let base = URL(string: "http://127.0.0.1:5111")!
+    /// GET /api/vocab ceiling (also the local cache file ceiling). The gateway
+    /// caps vocab at 256 entries and 32KB of (text + 64B/entry) data, which
+    /// serializes to ~40KB for a full CJK list and ~63.4KB in the worst case
+    /// (every character a JSON-escaped quote) -- inside this 64KB limit.
     private static let maxPayloadBytes = 65_536
     private static let cacheSchema = 1
 

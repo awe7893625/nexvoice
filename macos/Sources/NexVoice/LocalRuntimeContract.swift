@@ -42,11 +42,18 @@ enum LocalRuntimeProbeResult: Equatable, Sendable {
     case unavailable(String)
     case recognized(identity: LocalRuntimeIdentity, matchesExpectedBuild: Bool)
     case occupied(String)
+    /// Something answered on the runtime port but its /health body exceeded
+    /// `LocalRuntimeContract.maxResponseBytes`. Its identity is unverifiable,
+    /// so it is neither adopted nor reported as a foreign/legacy runtime.
+    case oversizedResponse(limit: Int)
 }
 
 enum LocalRuntimeContract {
     static let expectedContractVersion = 2
-    static let maxResponseBytes = 16 * 1_024
+    /// /health and the shutdown ack are a few hundred bytes; 256KB leaves
+    /// room for future fields without letting a port squatter make us buffer
+    /// an unbounded body (the limit is enforced while streaming).
+    static let maxResponseBytes = 256 * 1_024
     static let bundledManifest = loadBundledManifest()
 
     static func decodeManifest(_ data: Data) -> LocalRuntimeManifest? {
@@ -123,6 +130,8 @@ enum LocalRuntimeContract {
                 matchesExpectedBuild: identity.contractVersion == manifest.contractVersion
                     && identity.runtimeBuild == manifest.runtimeBuild
             )
+        } catch LocalHTTPError.responseTooLarge(let limit) {
+            return .oversizedResponse(limit: limit)
         } catch let error as URLError where [
             .cannotConnectToHost, .networkConnectionLost, .notConnectedToInternet,
             .cannotFindHost, .timedOut

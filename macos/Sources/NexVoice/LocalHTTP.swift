@@ -45,17 +45,100 @@ enum LocalHTTP {
         return URLSession(configuration: configuration)
     }
 
-    /// Buffered request with a response-size ceiling. Rejects up front when the
-    /// declared Content-Length is too large, and again after the body arrives.
+    /// Request with a response-size ceiling enforced while the body streams
+    /// in: the task is cancelled as soon as the declared Content-Length or the
+    /// bytes received so far exceed `maxBytes`, so a misbehaving listener on a
+    /// local port can never make us buffer more than `maxBytes` (+ one chunk).
+    /// Throws `LocalHTTPError.responseTooLarge` for that case, distinct from
+    /// transport errors (URLError).
     static func data(
         for request: URLRequest,
         maxBytes: Int,
         provider: SharedURLSessionProvider = shared
     ) async throws -> (Data, URLResponse) {
-        let (data, response) = try await provider.session.data(for: request)
-        guard response.expectedContentLength <= Int64(maxBytes),
-              data.count <= maxBytes
-        else { throw VoiceAPIError.responseTooLarge }
-        return (data, response)
+        let task = provider.session.dataTask(with: request)
+        let collector = BoundedDataCollector(maxBytes: maxBytes)
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                collector.install(continuation)
+                // Task-specific delegate (macOS 12+): receives this task's
+                // data/completion callbacks; the task retains it until done.
+                task.delegate = collector
+                task.resume()
+            }
+        } onCancel: {
+            task.cancel()
+        }
+    }
+}
+
+enum LocalHTTPError: Error, Equatable, LocalizedError {
+    case responseTooLarge(limit: Int)
+
+    var errorDescription: String? {
+        switch self {
+        case .responseTooLarge(let limit):
+            "回應超過 \(limit / 1_024) KB 上限"
+        }
+    }
+}
+
+private final class BoundedDataCollector: NSObject, URLSessionDataDelegate, @unchecked Sendable {
+    private let lock = NSLock()
+    private let maxBytes: Int
+    private var buffer = Data()
+    private var exceeded = false
+    private var continuation: CheckedContinuation<(Data, URLResponse), Error>?
+
+    init(maxBytes: Int) {
+        self.maxBytes = maxBytes
+    }
+
+    func install(_ continuation: CheckedContinuation<(Data, URLResponse), Error>) {
+        lock.lock(); defer { lock.unlock() }
+        self.continuation = continuation
+    }
+
+    private func declaredTooLarge(_ response: URLResponse?) -> Bool {
+        guard let response else { return false }
+        return response.expectedContentLength > Int64(maxBytes)
+    }
+
+    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
+        lock.lock()
+        if exceeded {
+            lock.unlock()
+            return
+        }
+        if declaredTooLarge(dataTask.response) || buffer.count + data.count > maxBytes {
+            exceeded = true
+            buffer = Data()
+            lock.unlock()
+            dataTask.cancel()
+            return
+        }
+        buffer.append(data)
+        lock.unlock()
+    }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        lock.lock()
+        let continuation = self.continuation
+        self.continuation = nil
+        let tooLarge = exceeded || declaredTooLarge(task.response)
+        let body = buffer
+        buffer = Data()
+        lock.unlock()
+        guard let continuation else { return }
+
+        if tooLarge {
+            continuation.resume(throwing: LocalHTTPError.responseTooLarge(limit: maxBytes))
+        } else if let error {
+            continuation.resume(throwing: error)
+        } else if let response = task.response {
+            continuation.resume(returning: (body, response))
+        } else {
+            continuation.resume(throwing: URLError(.badServerResponse))
+        }
     }
 }

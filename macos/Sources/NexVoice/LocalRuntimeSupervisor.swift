@@ -55,6 +55,11 @@ final class LocalRuntimeSupervisor {
         case .occupied(let reason):
             lastError = reason
             return
+        case .oversizedResponse(let limit):
+            // Port is answering but unverifiably: don't adopt, don't shut it
+            // down, don't label it foreign -- and don't start a second runtime.
+            lastError = Self.oversizedMessage(limit: limit)
+            return
         case .recognized(let identity, _):
             // A compatible or older v2 runtime may be an orphan from the
             // previous signed App. It shuts itself down only after the exact
@@ -123,6 +128,8 @@ final class LocalRuntimeSupervisor {
                 return
             case .occupied(let reason):
                 lastError = reason
+            case .oversizedResponse(let limit):
+                lastError = Self.oversizedMessage(limit: limit)
             case .recognized:
                 lastError = "runtime 身分與本次 App 不一致"
             case .unavailable:
@@ -176,6 +183,14 @@ final class LocalRuntimeSupervisor {
                 ),
                 latencyMilliseconds: latency
             )
+        case .oversizedResponse(let limit):
+            return ServiceStatus(
+                id: name,
+                name: name,
+                detail: detail,
+                state: .unavailable(Self.oversizedMessage(limit: limit)),
+                latencyMilliseconds: latency
+            )
         case .occupied(let reason), .unavailable(let reason):
             return ServiceStatus(
                 id: name,
@@ -220,6 +235,10 @@ final class LocalRuntimeSupervisor {
         ownerNonce = nil
         lastError = nil
         return true
+    }
+
+    nonisolated static func oversizedMessage(limit: Int) -> String {
+        "5112 health 回應超過 \(limit / 1_024) KB，無法驗證 runtime 身分"
     }
 
     private func waitUntilPortIsFree(manifest: LocalRuntimeManifest) async -> Bool {

@@ -33,7 +33,7 @@ class Running:
         self.count = 0
 
 
-def fake_mlx(loads, gate=None, entered=None, running=None, work_seconds=0.0):
+def fake_mlx(loads, gate=None, entered=None, running=None, work_seconds=0.0, load_seconds=0.0):
     package = types.ModuleType("mlx_whisper")
     transcribe_module = types.ModuleType("mlx_whisper.transcribe")
 
@@ -47,6 +47,8 @@ def fake_mlx(loads, gate=None, entered=None, running=None, work_seconds=0.0):
                 running.count += 1
         try:
             if ModelHolder.model is None or ModelHolder.model_path != path_or_hf_repo:
+                if load_seconds:
+                    time.sleep(load_seconds)  # cold load of the weights
                 loads.append(path_or_hf_repo)
                 ModelHolder.model = object()
                 ModelHolder.model_path = path_or_hf_repo
@@ -148,6 +150,34 @@ class TestIdleUnload:
             self._transcribe("partial")
             assert loads == ["fake/partial", "fake/final", "fake/final", "fake/partial"]
             assert set(runtime._MODEL_CACHE) == {"fake/partial", "fake/final"}
+
+    def test_first_final_after_unload_succeeds(self, capsys):
+        """Cold reload after idle unload: slow, but the request succeeds.
+
+        The unloader keeps firing during the reload with the clock far past
+        the idle limit; it must not drop the model the request is loading.
+        """
+        loads = []
+        modules = fake_mlx(loads, load_seconds=0.3)
+        with patch.dict(sys.modules, modules):
+            self._transcribe("final")
+            self.clock.now += 10_000
+            assert runtime.maybe_unload_idle_models() is True
+            assert runtime._MODEL_CACHE == {}
+            clears_after_unload = list(self.clears)
+
+            self.clock.now += 10_000  # still "idle" while the reload runs
+            self._start_unloader(interval=0.005)
+            started = time.monotonic()
+            text = self._transcribe("final")
+            elapsed = time.monotonic() - started
+
+            assert text == "ok"
+            assert elapsed >= 0.3  # really paid the (fake) cold load
+            assert loads == ["fake/final", "fake/final"]
+            assert "fake/final" in runtime._MODEL_CACHE
+            assert self.clears == clears_after_unload  # no unload mid-reload
+        assert "idle-unload: reloaded final model" in capsys.readouterr().out
 
     def test_recent_use_resets_idle_timer(self):
         loads = []

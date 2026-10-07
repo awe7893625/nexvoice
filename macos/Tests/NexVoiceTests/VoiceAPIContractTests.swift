@@ -49,7 +49,10 @@ final class VoiceAPIContractTests: XCTestCase {
     }
 
     func testFinalTranscribeTimeoutScalesWithAudioLength() {
-        XCTAssertEqual(VoiceAPI.finalTranscribeTimeout(audioBytes: 0), 20, accuracy: 0.01)
+        // Short clips get the cold-reload floor (model may have been idle-unloaded).
+        XCTAssertEqual(VoiceAPI.finalTranscribeTimeout(audioBytes: 0), 45, accuracy: 0.01)
+        XCTAssertEqual(VoiceAPI.finalTranscribeTimeout(audioBytes: 32_000 * 2), 45, accuracy: 0.01)
+        XCTAssertEqual(VoiceAPI.finalTranscribeTimeout(audioBytes: 32_000 * 25), 50, accuracy: 0.01)
         XCTAssertEqual(VoiceAPI.finalTranscribeTimeout(audioBytes: 32_000 * 60), 92, accuracy: 0.01)
         XCTAssertEqual(VoiceAPI.finalTranscribeTimeout(audioBytes: 32_000 * 600), 240, accuracy: 0.01)
     }

@@ -58,11 +58,17 @@ struct VoiceAPI {
         localGatewaySession = URLSession(configuration: localGatewayConfiguration)
     }
 
-    /// Base 20s covers model warm-up and dispatch; add real-time-factor
-    /// headroom proportional to audio duration (16kHz mono 16-bit = 32KB/s).
+    /// Base 20s covers dispatch; add real-time-factor headroom proportional
+    /// to audio duration (16kHz mono 16-bit = 32KB/s). Never below
+    /// `coldReloadFloor`: after the runtime's idle unload (claude-c13r) the
+    /// first final request also pays a cold reload of the ~3GB final model
+    /// under the model lock, and the runtime sends no bytes until it is done,
+    /// so even a one-second clip must be allowed that long.
+    static let coldReloadFloor: TimeInterval = 45
+
     static func finalTranscribeTimeout(audioBytes: Int) -> TimeInterval {
         let audioSeconds = TimeInterval(audioBytes) / 32_000
-        return min(240, 20 + audioSeconds * 1.2)
+        return min(240, max(coldReloadFloor, 20 + audioSeconds * 1.2))
     }
 
     func transcribeLocal(
