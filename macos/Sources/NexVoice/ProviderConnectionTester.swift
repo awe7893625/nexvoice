@@ -2,11 +2,10 @@ import Foundation
 
 enum ProviderConnectionTester {
     private static func succeeds(_ request: URLRequest) async -> Bool {
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.timeoutIntervalForRequest = 6
-        configuration.timeoutIntervalForResource = 8
+        var request = request
+        request.timeoutInterval = 6
         do {
-            let (_, response) = try await URLSession(configuration: configuration).data(for: request)
+            let (_, response) = try await LocalHTTP.data(for: request, maxBytes: 1_048_576)
             guard let http = response as? HTTPURLResponse else { return false }
             return 200..<300 ~= http.statusCode
         } catch {

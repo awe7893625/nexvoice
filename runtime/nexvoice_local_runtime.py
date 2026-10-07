@@ -8,6 +8,7 @@ and requires the per-user token created by the macOS app.
 from __future__ import annotations
 
 import base64
+import gc
 import hashlib
 import hmac
 import importlib
@@ -93,6 +94,16 @@ _MODEL_LOCK = threading.Lock()
 _PARTIAL_GATE = threading.Lock()
 _MODEL_CACHE: dict[str, object] = {}
 _SHUTTING_DOWN = threading.Event()
+# Idle unload (claude-c13r): the partial + final ASR weights (~3.5GB) used to
+# stay resident for the whole process lifetime. After
+# NEXVOICE_IDLE_UNLOAD_SEC with no request in flight the cache is dropped and
+# the next request reloads lazily. <= 0 disables unloading.
+_IDLE_STATE_LOCK = threading.Lock()
+_CLOCK = time.monotonic
+_LAST_USED = _CLOCK()
+_IN_FLIGHT = 0
+_UNLOADED_MODELS: set[str] = set()
+_IDLE_CHECK_INTERVAL_SEC = 60.0
 _VAD_TIER: str | None = None
 
 # Distinctive product names only. Whisper mirrors the *style* of the initial
@@ -704,11 +715,14 @@ def _transcribe_core(
     partial_gate_acquired = quality != "partial" or _PARTIAL_GATE.acquire(blocking=False)
     if not partial_gate_acquired:
         raise RuntimeBusy("partial transcription already running")
+    _begin_model_use()
     try:
         prompt = build_initial_prompt(vocab_terms or [], partial=quality == "partial")
         # MLX model execution is serialized. The non-blocking partial gate also
         # prevents stale live-caption requests from building an unbounded queue.
         with _MODEL_LOCK:
+            reloading = model not in _MODEL_CACHE and _consume_unloaded(model)
+            load_started = time.monotonic()
             holder = None
             try:
                 holder = importlib.import_module("mlx_whisper.transcribe").ModelHolder
@@ -734,7 +748,14 @@ def _transcribe_core(
                 # the tiny partial and large final model both warm on this M5,
                 # avoiding a full reload every time recording stops.
                 _MODEL_CACHE[model] = holder.model
+            if reloading:
+                print(
+                    f"idle-unload: reloaded {quality} model in "
+                    f"{time.monotonic() - load_started:.1f}s (incl. first inference)",
+                    flush=True,
+                )
     finally:
+        _end_model_use()
         if quality == "partial" and partial_gate_acquired:
             _PARTIAL_GATE.release()
     segments = result.get("segments")
@@ -744,6 +765,107 @@ def _transcribe_core(
         segments = []
         text = str(result.get("text", "")).strip()
     return collapse_repetition_loops(text), segments
+
+
+def _idle_unload_seconds() -> float:
+    try:
+        return float(os.environ.get("NEXVOICE_IDLE_UNLOAD_SEC", "1800"))
+    except ValueError:
+        return 1800.0
+
+
+def _begin_model_use() -> None:
+    global _IN_FLIGHT, _LAST_USED
+    with _IDLE_STATE_LOCK:
+        _IN_FLIGHT += 1
+        _LAST_USED = _CLOCK()
+
+
+def _end_model_use() -> None:
+    global _IN_FLIGHT, _LAST_USED
+    with _IDLE_STATE_LOCK:
+        _IN_FLIGHT -= 1
+        # Also stamp the end so a long transcription is not counted as idle time.
+        _LAST_USED = _CLOCK()
+
+
+def _consume_unloaded(model: str) -> bool:
+    with _IDLE_STATE_LOCK:
+        if model in _UNLOADED_MODELS:
+            _UNLOADED_MODELS.discard(model)
+            return True
+        return False
+
+
+def _release_mlx_memory() -> None:
+    gc.collect()
+    try:
+        import mlx.core as mx  # type: ignore
+    except ImportError:
+        return
+    clear_cache = getattr(mx, "clear_cache", None)
+    if clear_cache is None:
+        clear_cache = getattr(getattr(mx, "metal", None), "clear_cache", None)
+    if clear_cache is not None:
+        try:
+            clear_cache()
+        except Exception:  # pragma: no cover - best-effort only
+            pass
+
+
+def maybe_unload_idle_models() -> bool:
+    """Drop cached ASR models after an idle period; return True if unloaded.
+
+    Never blocks a transcription: skips while a request is in flight or the
+    model lock is held. Both the final and the tiny partial model are dropped,
+    including mlx-whisper's own ModelHolder reference (otherwise the last-used
+    model would stay resident). The next request reloads lazily.
+    """
+    limit = _idle_unload_seconds()
+    if limit <= 0:
+        return False
+    with _IDLE_STATE_LOCK:
+        if _IN_FLIGHT > 0 or _CLOCK() - _LAST_USED < limit:
+            return False
+    if not _MODEL_LOCK.acquire(blocking=False):
+        return False
+    try:
+        with _IDLE_STATE_LOCK:
+            if _IN_FLIGHT > 0:
+                return False
+            idle = _CLOCK() - _LAST_USED
+        holder = None
+        try:
+            holder = importlib.import_module("mlx_whisper.transcribe").ModelHolder
+        except (AttributeError, ImportError):
+            holder = None
+        if not _MODEL_CACHE and (holder is None or getattr(holder, "model", None) is None):
+            return False
+        started = time.monotonic()
+        names = sorted(_MODEL_CACHE)
+        _MODEL_CACHE.clear()
+        if holder is not None:
+            holder.model = None
+            holder.model_path = None
+        _release_mlx_memory()
+        with _IDLE_STATE_LOCK:
+            _UNLOADED_MODELS.update(names)
+        print(
+            f"idle-unload: released {len(names)} model(s) after {idle:.0f}s idle "
+            f"in {time.monotonic() - started:.2f}s",
+            flush=True,
+        )
+        return True
+    finally:
+        _MODEL_LOCK.release()
+
+
+def _idle_unload_loop() -> None:
+    while not _SHUTTING_DOWN.wait(_IDLE_CHECK_INTERVAL_SEC):
+        try:
+            maybe_unload_idle_models()
+        except Exception as exc:  # pragma: no cover - never kill the daemon
+            print(f"idle-unload: failed: {type(exc).__name__}: {exc}", flush=True)
 
 
 def transcribe_wav(
@@ -1027,4 +1149,5 @@ if __name__ == "__main__":
     )
     threading.Thread(target=watch_parent, args=(httpd,), daemon=True).start()
     threading.Thread(target=_warm_models, daemon=True).start()
+    threading.Thread(target=_idle_unload_loop, daemon=True).start()
     httpd.serve_forever(poll_interval=0.25)

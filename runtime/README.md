@@ -19,3 +19,11 @@ zsh runtime/setup-runtime.sh
 The app creates `~/.cache/nexvoice/local-runtime.token` with mode 0600. A
 launchd bundle must run under the same user and read that file; never place the
 token in a plist, command line, or world-readable log.
+
+## Memory
+
+Cached ASR weights (final + tiny partial model, ~3.5GB) are released after
+`NEXVOICE_IDLE_UNLOAD_SEC` seconds without a transcription request (default
+`1800`; `0` disables). A daemon thread checks every 60s, never unloads while a
+request is in flight, and the next request reloads the model lazily. Unload and
+reload are logged with their durations (`idle-unload: ...`).

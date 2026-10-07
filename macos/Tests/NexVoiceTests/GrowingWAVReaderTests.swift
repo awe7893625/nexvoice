@@ -94,6 +94,55 @@ final class GrowingWAVReaderTests: XCTestCase {
         XCTAssertNil(GrowingWAVReader.snapshot(of: Data(Array("RIFF".utf8))))
     }
 
+    private func writeTemporary(_ data: Data) throws -> URL {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("nexvoice-tail-\(UUID().uuidString).wav")
+        try data.write(to: url)
+        addTeardownBlock { try? FileManager.default.removeItem(at: url) }
+        return url
+    }
+
+    func testTailSnapshotReadsOnlyTheTrailingWindow() throws {
+        // 16kHz mono 16-bit = 32,000 bytes/s; 100,000 bytes ≈ 3.1s of audio.
+        var bytes = avAudioRecorderStyleBytes(audioByteCount: 100_000, declaredFillerSize: 4_008)
+        // Mark the last frame so we can prove the window comes from the end.
+        bytes[bytes.endIndex - 2] = 0x7E
+        bytes[bytes.endIndex - 1] = 0x7F
+        let url = try writeTemporary(bytes)
+
+        guard let tail = try GrowingWAVReader.tailSnapshot(of: url, maxSeconds: 1.0) else {
+            return XCTFail("expected a tail snapshot")
+        }
+        XCTAssertEqual(dataChunkSize(of: tail), 32_000)
+        XCTAssertEqual(tail.count, 44 + 32_000)
+        XCTAssertEqual(Array(tail.suffix(2)), [0x7E, 0x7F])
+        // Same header layout as a full snapshot, only the sizes differ.
+        let full = try XCTUnwrap(GrowingWAVReader.snapshot(of: bytes))
+        XCTAssertEqual(tail.prefix(36).dropFirst(8), full.prefix(36).dropFirst(8))
+    }
+
+    func testTailSnapshotOfShortRecordingMatchesFullSnapshot() throws {
+        let bytes = avAudioRecorderStyleBytes(audioByteCount: 10_000, declaredFillerSize: 4_008)
+        let url = try writeTemporary(bytes)
+        let tail = try GrowingWAVReader.tailSnapshot(of: url, maxSeconds: 30)
+        XCTAssertEqual(tail, GrowingWAVReader.snapshot(of: bytes))
+    }
+
+    func testTailSnapshotStaysFrameAlignedForOddWindows() throws {
+        let bytes = avAudioRecorderStyleBytes(audioByteCount: 100_000, declaredFillerSize: 4_008)
+        let url = try writeTemporary(bytes)
+        let tail = try XCTUnwrap(GrowingWAVReader.tailSnapshot(of: url, maxSeconds: 0.3333))
+        let size = try XCTUnwrap(dataChunkSize(of: tail))
+        XCTAssertTrue(size.isMultiple(of: 2))
+        XCTAssertLessThanOrEqual(size, 10_666)
+    }
+
+    func testTailSnapshotWithNoAudioYetIsNil() throws {
+        let bytes = avAudioRecorderStyleBytes(audioByteCount: 0, declaredFillerSize: 4_008)
+        let url = try writeTemporary(bytes)
+        XCTAssertNil(try GrowingWAVReader.tailSnapshot(of: url, maxSeconds: 30))
+    }
+
     private func dataChunkSize(of wav: Data) -> UInt32? {
         guard wav.count >= 44 else { return nil }
         let start = wav.startIndex

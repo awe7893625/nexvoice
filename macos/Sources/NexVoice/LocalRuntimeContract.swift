@@ -60,7 +60,8 @@ enum LocalRuntimeContract {
 
     static func probe(
         expected manifest: LocalRuntimeManifest? = bundledManifest,
-        timeout: TimeInterval = 1.5
+        timeout: TimeInterval = 1.5,
+        sessionProvider: SharedURLSessionProvider = LocalHTTP.shared
     ) async -> LocalRuntimeProbeResult {
         guard let manifest else {
             return .occupied("App bundle 缺少 runtime contract")
@@ -82,7 +83,9 @@ enum LocalRuntimeContract {
         )
 
         do {
-            let (data, response) = try await limitedData(for: request, timeout: timeout)
+            let (data, response) = try await LocalHTTP.data(
+                for: request, maxBytes: maxResponseBytes, provider: sessionProvider
+            )
             guard let http = response as? HTTPURLResponse else {
                 return .occupied("5112 回應不是 HTTP")
             }
@@ -162,7 +165,7 @@ enum LocalRuntimeContract {
         )
 
         do {
-            let (data, response) = try await limitedData(for: request, timeout: 2)
+            let (data, response) = try await LocalHTTP.data(for: request, maxBytes: maxResponseBytes)
             guard (response as? HTTPURLResponse)?.statusCode == 202,
                   let ack = try? JSONDecoder().decode(ShutdownAck.self, from: data),
                   ack.instanceID == identity.instanceID,
@@ -218,22 +221,5 @@ enum LocalRuntimeContract {
         guard value.hasPrefix("sha256:") else { return false }
         let digest = value.dropFirst("sha256:".count)
         return digest.count == 64 && digest.allSatisfy { $0.isHexDigit }
-    }
-
-    private static func limitedData(
-        for request: URLRequest,
-        timeout: TimeInterval
-    ) async throws -> (Data, URLResponse) {
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.timeoutIntervalForRequest = timeout
-        configuration.timeoutIntervalForResource = timeout + 0.5
-        let (bytes, response) = try await URLSession(configuration: configuration).bytes(for: request)
-        var data = Data()
-        data.reserveCapacity(1_024)
-        for try await byte in bytes {
-            guard data.count < maxResponseBytes else { throw VoiceAPIError.responseTooLarge }
-            data.append(byte)
-        }
-        return (data, response)
     }
 }

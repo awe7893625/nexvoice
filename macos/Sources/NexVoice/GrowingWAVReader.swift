@@ -21,6 +21,55 @@ enum GrowingWAVReader {
     private static let dataChunkIDs: Set<String> = ["data", "FLLR"]
 
     static func snapshot(of bytes: Data) -> Data? {
+        guard let header = parseHeader(bytes) else { return nil }
+        let payload = bytes[(bytes.startIndex + header.payloadOffset)..<bytes.endIndex]
+        guard !payload.isEmpty else { return nil }
+        return wrap(fmtChunk: header.fmtChunk, payload: payload)
+    }
+
+    /// Bytes read from the front of the file to locate `fmt ` and the payload
+    /// start. AVAudioRecorder's header (incl. the FLLR reservation's chunk
+    /// header) sits well inside this.
+    static let headerProbeBytes = 64 * 1_024
+
+    /// Like `snapshot(of:)`, but reads only the header plus the last
+    /// `maxSeconds` of audio straight from disk (claude-c13r). The live
+    /// preview used to load the whole growing recording every 1.8s, which made
+    /// memory and I/O grow quadratically with dictation length.
+    static func tailSnapshot(of url: URL, maxSeconds: Double) throws -> Data? {
+        let handle = try FileHandle(forReadingFrom: url)
+        defer { try? handle.close() }
+        let fileSize = try Int(handle.seekToEnd())
+        try handle.seek(toOffset: 0)
+        guard let headerBytes = try handle.read(upToCount: min(fileSize, headerProbeBytes)),
+              let header = parseHeader(headerBytes),
+              header.payloadOffset < fileSize
+        else { return nil }
+
+        let fmt = header.fmtChunk
+        // WAVEFORMAT: byteRate at offset 8 (UInt32), blockAlign at 12 (UInt16).
+        let byteRate = fmt.count >= 12 ? Int(readUInt32LE(fmt, at: fmt.startIndex + 8)) : 0
+        let blockAlign = fmt.count >= 14
+            ? max(1, Int(fmt[fmt.startIndex + 12]) | Int(fmt[fmt.startIndex + 13]) << 8)
+            : 1
+        let payloadLength = fileSize - header.payloadOffset
+        var skip = 0
+        if byteRate > 0, maxSeconds > 0 {
+            let window = Int(Double(byteRate) * maxSeconds)
+            if payloadLength > window {
+                // Keep the tail frame-aligned relative to the payload start.
+                skip = (payloadLength - window + blockAlign - 1) / blockAlign * blockAlign
+            }
+        }
+        guard skip < payloadLength else { return nil }
+        try handle.seek(toOffset: UInt64(header.payloadOffset + skip))
+        guard let payload = try handle.read(upToCount: payloadLength - skip),
+              !payload.isEmpty
+        else { return nil }
+        return wrap(fmtChunk: fmt, payload: payload)
+    }
+
+    private static func parseHeader(_ bytes: Data) -> (fmtChunk: Data, payloadOffset: Int)? {
         guard bytes.count >= 12 else { return nil }
         let start = bytes.startIndex
         guard bytes[start..<start + 4].elementsEqual(Array("RIFF".utf8)),
@@ -49,10 +98,12 @@ enum GrowingWAVReader {
         }
 
         guard let fmtChunkData, let payloadOffset, payloadOffset <= bytes.endIndex else { return nil }
-        let payload = bytes[payloadOffset..<bytes.endIndex]
-        guard !payload.isEmpty else { return nil }
+        return (fmtChunkData, payloadOffset - start)
+    }
 
+    private static func wrap(fmtChunk fmtChunkData: Data, payload: Data) -> Data {
         var result = Data()
+        result.reserveCapacity(20 + fmtChunkData.count + payload.count)
         result.append(contentsOf: Array("RIFF".utf8))
         appendUInt32LE(&result, UInt32(4 + (8 + fmtChunkData.count) + (8 + payload.count)))
         result.append(contentsOf: Array("WAVE".utf8))

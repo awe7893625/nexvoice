@@ -35,7 +35,9 @@ enum ServiceProbe {
         for (field, value) in headers { request.setValue(value, forHTTPHeaderField: field) }
 
         do {
-            let (_, response) = try await URLSession.shared.bytes(for: request)
+            // `bytes(for:)` without draining the stream left every 5s health
+            // check's task open (claude-c13r); buffer the small body instead.
+            let (_, response) = try await LocalHTTP.data(for: request, maxBytes: 65_536)
             guard let http = response as? HTTPURLResponse, 200..<300 ~= http.statusCode else {
                 return ServiceStatus(
                     id: name,

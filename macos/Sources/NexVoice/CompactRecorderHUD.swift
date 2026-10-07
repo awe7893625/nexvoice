@@ -66,6 +66,7 @@ final class CompactRecorderHUD {
     }
 
     func showResult(original: String, translation: String?, status: String) {
+        stopMetering()
         model.isBusy = true
         model.statusText = status
         model.resultOriginal = original
@@ -143,9 +144,15 @@ final class CompactRecorderHUD {
         // tick to keep its original 0.08s cadence.
         let interval = 0.04
         historyTick = 0
-        meterTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
-            Task { @MainActor in
-                guard let self else { return }
+        // The timer is scheduled on the main run loop, so its block already
+        // runs on the main thread. Spawning a Task per tick (25 Hz) allocated
+        // and enqueued a job every 40ms for the whole recording (claude-c13r).
+        meterTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] timer in
+            MainActor.assumeIsolated {
+                guard let self else {
+                    timer.invalidate()
+                    return
+                }
                 let raw = self.meterProvider?() ?? 0
                 let voiced = self.bypassNoiseGate
                     ? (raw.isNaN ? 0 : max(0, min(1, raw)))

@@ -21,10 +21,6 @@ enum VocabStore {
     private static let maxPayloadBytes = 65_536
     private static let cacheSchema = 1
 
-    private enum StoreError: Error {
-        case responseTooLarge
-    }
-
     private struct CacheEnvelope: Codable {
         let schema: Int
         let generatedAt: String
@@ -36,11 +32,7 @@ enum VocabStore {
             var request = URLRequest(url: base.appendingPathComponent("api/vocab"))
             request.timeoutInterval = 2
             if let token = GatewayToken.current { request.setValue(token, forHTTPHeaderField: "X-NexVoice-Token") }
-            let configuration = URLSessionConfiguration.ephemeral
-            configuration.timeoutIntervalForRequest = 2
-            configuration.timeoutIntervalForResource = 3
-            let session = URLSession(configuration: configuration)
-            let (data, response) = try await limitedData(for: request, session: session)
+            let (data, response) = try await LocalHTTP.data(for: request, maxBytes: maxPayloadBytes)
             guard let http = response as? HTTPURLResponse,
                   200..<300 ~= http.statusCode,
                   response.expectedContentLength <= Int64(maxPayloadBytes),
@@ -88,8 +80,7 @@ enum VocabStore {
         ]
         request.httpBody = try? JSONSerialization.data(withJSONObject: body)
         do {
-            let session = boundedSession()
-            let (_, response) = try await limitedData(for: request, session: session)
+            let (_, response) = try await LocalHTTP.data(for: request, maxBytes: maxPayloadBytes)
             return (response as? HTTPURLResponse).map { 200..<300 ~= $0.statusCode } ?? false
         } catch {
             return false
@@ -103,8 +94,7 @@ enum VocabStore {
         if let token = GatewayToken.current { request.setValue(token, forHTTPHeaderField: "X-NexVoice-Token") }
         request.httpMethod = "DELETE"
         do {
-            let session = boundedSession()
-            let (_, response) = try await limitedData(for: request, session: session)
+            let (_, response) = try await LocalHTTP.data(for: request, maxBytes: maxPayloadBytes)
             return (response as? HTTPURLResponse).map { 200..<300 ~= $0.statusCode } ?? false
         } catch {
             return false
@@ -115,31 +105,6 @@ enum VocabStore {
         FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".cache/nexvoice", isDirectory: true)
             .appendingPathComponent("vocabulary-cache.json")
-    }
-
-    private static func limitedData(
-        for request: URLRequest,
-        session: URLSession
-    ) async throws -> (Data, URLResponse) {
-        let (bytes, response) = try await session.bytes(for: request)
-        if response.expectedContentLength > Int64(maxPayloadBytes) {
-            throw StoreError.responseTooLarge
-        }
-        var data = Data()
-        data.reserveCapacity(min(maxPayloadBytes, max(0, Int(response.expectedContentLength))))
-        for try await byte in bytes {
-            try Task.checkCancellation()
-            guard data.count < maxPayloadBytes else { throw StoreError.responseTooLarge }
-            data.append(byte)
-        }
-        return (data, response)
-    }
-
-    private static func boundedSession() -> URLSession {
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.timeoutIntervalForRequest = 2
-        configuration.timeoutIntervalForResource = 3
-        return URLSession(configuration: configuration)
     }
 
     private static func saveCache(_ entries: [VocabEntry]) {

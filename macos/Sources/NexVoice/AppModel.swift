@@ -101,6 +101,7 @@ final class AppModel: ObservableObject {
     /// loop retries the takeover instead of leaving the hotkey dead.
     private var enableRetryPending = false
     private var enableRetryTick = 0
+    private var healthPollBackoff = HealthPollBackoff()
 
     init(defaults: UserDefaults = .standard) {
         SecretStore.migrateLegacySecretsToKeychain()
@@ -392,7 +393,11 @@ final class AppModel: ObservableObject {
                         self.notice = "偵測到 Typeless 已啟動，NexVoice 已自動停用。"
                     }
                 }
-                try? await Task.sleep(for: .seconds(5))
+                // Pending enable retries rely on the ~5s tick cadence above.
+                let interval = self.healthPollBackoff.record(
+                    healthy: self.mlx.isHealthy && !self.enableRetryPending
+                )
+                try? await Task.sleep(for: .seconds(interval))
             }
         }
     }
@@ -860,5 +865,23 @@ extension TriggerBehavior {
         case .toggle: "按一下切換"
         case .pushToTalk: "按住說話"
         }
+    }
+}
+
+/// Health-loop cadence (claude-c13r): poll every 5s, back off to 30s once the
+/// local runtime has been healthy for 5 consecutive checks, and snap back to 5s
+/// on the first failure.
+struct HealthPollBackoff: Equatable {
+    static let fastInterval: Double = 5
+    static let slowInterval: Double = 30
+    static let healthyChecksBeforeBackoff = 5
+
+    private(set) var consecutiveHealthy = 0
+
+    mutating func record(healthy: Bool) -> Double {
+        consecutiveHealthy = healthy ? consecutiveHealthy + 1 : 0
+        return consecutiveHealthy >= Self.healthyChecksBeforeBackoff
+            ? Self.slowInterval
+            : Self.fastInterval
     }
 }

@@ -761,6 +761,10 @@ final class VoiceRuntimeController {
         }
     }
 
+    /// Live captions transcribe only the most recent audio; the final
+    /// transcript still uses the complete recording.
+    static let livePreviewWindowSeconds: Double = 30
+
     /// Typeless-style live caption preview. It samples the growing WAV without
     /// interrupting recording; the final stopped file still owns the canonical
     /// transcript and paste operation.
@@ -780,9 +784,18 @@ final class VoiceRuntimeController {
                     // until stop() finalizes it, so a raw file copy always
                     // produces an unreadable/empty sample here. Reconstruct
                     // a header from the actual bytes present so far instead.
-                    let rawBytes = try Data(contentsOf: source)
-                    guard let readableSnapshot = GrowingWAVReader.snapshot(of: rawBytes) else { continue }
-                    try readableSnapshot.write(to: temp)
+                    // Only the trailing window is read (claude-c13r): loading
+                    // the whole growing file each pass was quadratic in
+                    // dictation length. The pool drains the per-pass buffers.
+                    let wroteSnapshot = try autoreleasepool { () throws -> Bool in
+                        guard let readableSnapshot = try GrowingWAVReader.tailSnapshot(
+                            of: source,
+                            maxSeconds: Self.livePreviewWindowSeconds
+                        ) else { return false }
+                        try readableSnapshot.write(to: temp)
+                        return true
+                    }
+                    guard wroteSnapshot else { continue }
                     defer { try? FileManager.default.removeItem(at: temp) }
                     self.liveTranscriptSequence += 1
                     let sequence = self.liveTranscriptSequence
