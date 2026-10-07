@@ -148,11 +148,14 @@ final class CompactRecorderHUD {
         // runs on the main thread. Spawning a Task per tick (25 Hz) allocated
         // and enqueued a job every 40ms for the whole recording (claude-c13r).
         meterTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] timer in
+            // HUD gone without hide(): stop the repeating timer instead of
+            // ticking (and being retained by the run loop) forever.
+            guard self != nil else {
+                timer.invalidate()
+                return
+            }
             MainActor.assumeIsolated {
-                guard let self else {
-                    timer.invalidate()
-                    return
-                }
+                guard let self else { return }
                 let raw = self.meterProvider?() ?? 0
                 let voiced = self.bypassNoiseGate
                     ? (raw.isNaN ? 0 : max(0, min(1, raw)))
