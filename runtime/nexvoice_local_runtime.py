@@ -307,7 +307,7 @@ _SENTENCE_ENDERS = "，。！？；：、,.!?;:…"
 
 
 _CJK_RUN = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\U00020000-\U0002FA1F]+")
-_URL_SPAN = re.compile(r"(?i)\b(?:https?://|ftp://|www\.)[^\s<>()]+")
+_URL_SPAN = re.compile(r"(?i)(?:https?://|ftp://|www\.)[^\s<>()]+")
 _MARKDOWN_CODE_SPAN = re.compile(r"```.*?```|`[^`\n]+`", re.DOTALL)
 
 

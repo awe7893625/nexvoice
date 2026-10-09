@@ -79,6 +79,7 @@ final class LocalRuntimeContractTests: XCTestCase {
             ownerNonce: ownerNonce,
             parentPID: nil,
             mlxWhisperVersion: nil,
+            zhConvert: nil,
             capabilities: ["identity-v1", "shutdown-v1", "challenge-response-v1"],
             responseProof: responseProof
         )

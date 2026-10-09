@@ -59,12 +59,17 @@ if [[ "${NEXVOICE_INSTALL_DRY_RUN:-0}" == "1" ]]; then
 fi
 
 # One-command open-source onboarding: install the private per-user MLX runtime
-# on first install. Existing environments are reused, and packagers can opt
+# on first install and refresh its requirements on upgrades. Packagers can opt
 # out when preparing an offline image.
 RUNTIME_PYTHON="$HOME/.cache/nexvoice/runtime/.venv/bin/python3"
-if [[ ! -x "$RUNTIME_PYTHON" && "${NEXVOICE_SKIP_RUNTIME_SETUP:-0}" != "1" ]]; then
-  echo "setting up local MLX runtime (first install only)…"
-  zsh "$ROOT_DIR/runtime/setup-runtime.sh"
+if [[ "${NEXVOICE_SKIP_RUNTIME_SETUP:-0}" != "1" ]]; then
+  if [[ ! -x "$RUNTIME_PYTHON" ]]; then
+    echo "setting up local MLX runtime…"
+    zsh "$ROOT_DIR/runtime/setup-runtime.sh"
+  else
+    echo "refreshing local MLX runtime requirements…"
+    "$RUNTIME_PYTHON" -m pip install --upgrade -r "$ROOT_DIR/runtime/requirements.txt"
+  fi
 fi
 
 if [[ -e "$STRAY" ]]; then

@@ -21,7 +21,7 @@ struct LocalRuntimeIdentity: Codable, Equatable, Sendable {
     let ownerNonce: String
     let parentPID: Int?
     let mlxWhisperVersion: String?
-    let zhConvert: String? = nil
+    let zhConvert: String?
     let capabilities: [String]
     let responseProof: String?
 

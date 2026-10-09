@@ -86,6 +86,11 @@ class RuntimeContractTests(unittest.TestCase):
                 "軟體 AI foo_bar.py https://例子.中国/视频 `视频` 信息",
             )
 
+    def test_zh_convert_preserves_url_directly_after_cjk_text(self):
+        with patch.dict(os.environ, {"NEXVOICE_ZH_CONVERT": "on"}):
+            text = "看https://软件.中国/视频"
+            self.assertEqual(runtime.convert_transcript(text), text)
+
     def test_zh_convert_can_be_disabled_without_importing_opencc(self):
         with (
             patch.dict(os.environ, {"NEXVOICE_ZH_CONVERT": "off"}),
