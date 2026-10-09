@@ -37,8 +37,24 @@ fi
 echo $$ > "$LOCK_DIR/pid"
 
 STAGING="$HOME/Applications/.NexVoice.app.staging.$$"
+RUNTIME_ROOT="$HOME/.cache/nexvoice/runtime"
+RUNTIME_VENV="$RUNTIME_ROOT/.venv"
+RUNTIME_STAGE_ROOT=""
+RUNTIME_LINK_STAGE=""
+RUNTIME_BACKUP=""
 cleanup() {
   rm -rf "$STAGING" 2>/dev/null || true
+  if [[ -n "$RUNTIME_BACKUP" && -e "$RUNTIME_BACKUP" ]]; then
+    if [[ -e "$RUNTIME_VENV" ]]; then
+      rm -rf "$RUNTIME_BACKUP" 2>/dev/null || true
+    else
+      mv "$RUNTIME_BACKUP" "$RUNTIME_VENV" 2>/dev/null || true
+    fi
+  fi
+  [[ -n "$RUNTIME_LINK_STAGE" ]] && rm -f "$RUNTIME_LINK_STAGE" 2>/dev/null || true
+  if [[ -n "$RUNTIME_STAGE_ROOT" && ! -L "$RUNTIME_VENV" ]]; then
+    rm -rf "$RUNTIME_STAGE_ROOT" 2>/dev/null || true
+  fi
   rm -rf "$LOCK_DIR" 2>/dev/null || true
 }
 trap cleanup EXIT
@@ -56,20 +72,6 @@ if [[ "${NEXVOICE_INSTALL_DRY_RUN:-0}" == "1" ]]; then
   codesign --verify --deep --strict "$DIST_APP"
   echo "dry-run: would install to $CANONICAL (no runtime setup, shutdown, or file replacement)"
   exit 0
-fi
-
-# One-command open-source onboarding: install the private per-user MLX runtime
-# on first install and refresh its requirements on upgrades. Packagers can opt
-# out when preparing an offline image.
-RUNTIME_PYTHON="$HOME/.cache/nexvoice/runtime/.venv/bin/python3"
-if [[ "${NEXVOICE_SKIP_RUNTIME_SETUP:-0}" != "1" ]]; then
-  if [[ ! -x "$RUNTIME_PYTHON" ]]; then
-    echo "setting up local MLX runtime…"
-    zsh "$ROOT_DIR/runtime/setup-runtime.sh"
-  else
-    echo "refreshing local MLX runtime requirements…"
-    "$RUNTIME_PYTHON" -m pip install --upgrade -r "$ROOT_DIR/runtime/requirements.txt"
-  fi
 fi
 
 if [[ -e "$STRAY" ]]; then
@@ -139,6 +141,61 @@ fi
 if [[ -f "$OWNER_RECORD" ]] && grep -q '"owner":"native"' "$OWNER_RECORD"; then
   echo "error: hotkey owner record is still native; refusing replacement" >&2
   exit 1
+fi
+
+# One-command open-source onboarding: install the private per-user MLX runtime
+# only after every pre-flight gate above has passed. Build it in a disposable
+# root so pip cannot modify the active venv; publish it only after setup
+# succeeds. After the first successful install, `.venv` is a stable symlink,
+# so subsequent staged environments are activated with one atomic rename.
+# Packagers can opt out when preparing an offline image.
+if [[ "${NEXVOICE_SKIP_RUNTIME_SETUP:-0}" != "1" ]]; then
+  RUNTIME_STAGE_ROOT="$RUNTIME_ROOT/.venv-runtime.$$"
+  echo "staging local MLX runtime…"
+  NEXVOICE_RUNTIME_DEST="$RUNTIME_STAGE_ROOT" \
+    zsh "$ROOT_DIR/runtime/setup-runtime.sh"
+
+  RUNTIME_STAGE_VENV="$RUNTIME_STAGE_ROOT/.venv"
+  [[ -x "$RUNTIME_STAGE_VENV/bin/python3" ]] || {
+    echo "error: staged local MLX runtime is missing its Python executable" >&2
+    exit 1
+  }
+
+  mkdir -p "$RUNTIME_ROOT"
+  RUNTIME_LINK_STAGE="$RUNTIME_ROOT/.venv-link.$$"
+  ln -s "$RUNTIME_STAGE_VENV" "$RUNTIME_LINK_STAGE"
+
+  if [[ -L "$RUNTIME_VENV" ]]; then
+    if ! mv -f "$RUNTIME_LINK_STAGE" "$RUNTIME_VENV"; then
+      echo "error: could not atomically publish staged local MLX runtime" >&2
+      exit 1
+    fi
+    RUNTIME_LINK_STAGE=""
+  else
+    # Migrate an older directory-form venv only after the staged install has
+    # succeeded. If the compatibility migration fails, restore the directory.
+    RUNTIME_BACKUP="$RUNTIME_ROOT/.venv.previous.$$"
+    if [[ -e "$RUNTIME_VENV" ]]; then
+      mv "$RUNTIME_VENV" "$RUNTIME_BACKUP"
+    fi
+    if ! mv "$RUNTIME_LINK_STAGE" "$RUNTIME_VENV"; then
+      echo "error: could not publish staged local MLX runtime; restoring previous venv" >&2
+      if [[ -e "$RUNTIME_BACKUP" ]]; then
+        mv "$RUNTIME_BACKUP" "$RUNTIME_VENV" || true
+      fi
+      exit 1
+    fi
+    RUNTIME_LINK_STAGE=""
+  fi
+
+  # The active symlink now owns the staged venv. Retain no obsolete copy from
+  # a directory migration, while the EXIT trap can still restore it if a
+  # failure occurs before this transaction completes.
+  if [[ -n "$RUNTIME_BACKUP" ]]; then
+    rm -rf "$RUNTIME_BACKUP"
+  fi
+  RUNTIME_STAGE_ROOT=""
+  RUNTIME_BACKUP=""
 fi
 
 mkdir -p "$HOME/Applications"
