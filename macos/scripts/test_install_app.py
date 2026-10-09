@@ -2,6 +2,9 @@
 """Static safety checks for the macOS installer preflight transaction."""
 
 from pathlib import Path
+import subprocess
+import tempfile
+import textwrap
 import unittest
 
 
@@ -52,6 +55,67 @@ class InstallAppOrderingTests(unittest.TestCase):
         self.assertLess(cleanup_stage, published)
         self.assertLess(published, runtime_end)
         self.assertIn('rm -rf "$RUNTIME_STAGE_ROOT"', SCRIPT[cleanup_stage:cleanup_stage + 180])
+
+    def test_failed_pip_stage_executes_cleanup(self):
+        cleanup_start = SCRIPT.index("cleanup() {")
+        cleanup_end = SCRIPT.index("\ntrap cleanup EXIT", cleanup_start)
+        cleanup_function = SCRIPT[cleanup_start:cleanup_end]
+        setup_runtime = Path(__file__).parents[2] / "runtime" / "setup-runtime.sh"
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            fake_python = temp_root / "python3"
+            fake_python.write_text(
+                "#!/bin/zsh\n"
+                "if [[ \"$1\" == \"-m\" && \"$2\" == \"venv\" ]]; then\n"
+                "  mkdir -p \"$3/bin\"\n"
+                "  print '#!/bin/zsh' > \"$3/bin/pip\"\n"
+                "  print 'exit 77' >> \"$3/bin/pip\"\n"
+                "  chmod +x \"$3/bin/pip\"\n"
+                "  exit 0\n"
+                "fi\n"
+                "exit 99\n"
+            )
+            fake_python.chmod(0o755)
+            stage_root = temp_root / "runtime" / ".venv-runtime.forced-failure"
+            harness = temp_root / "cleanup-harness.zsh"
+            harness.write_text(
+                textwrap.dedent(
+                    f"""\
+                    #!/bin/zsh
+                    set -euo pipefail
+                    STAGING="{temp_root}/app.staging"
+                    RUNTIME_ROOT="{temp_root}/runtime"
+                    RUNTIME_VENV="{temp_root}/runtime/.venv"
+                    RUNTIME_STAGE_ROOT=""
+                    RUNTIME_STAGE_PUBLISHED=0
+                    RUNTIME_BACKUP=""
+                    LOCK_DIR="{temp_root}/install.lock"
+                    {cleanup_function}
+                    trap cleanup EXIT
+
+                    RUNTIME_STAGE_ROOT="{stage_root}"
+                    if NEXVOICE_PYTHON="{fake_python}" \\
+                        NEXVOICE_RUNTIME_DEST="{stage_root}" \\
+                        zsh "{setup_runtime}"; then
+                      print -u2 "forced pip failure unexpectedly succeeded"
+                      exit 1
+                    fi
+                    exit 0
+                    """
+                )
+            )
+            harness.chmod(0o755)
+
+            result = subprocess.run(
+                ["zsh", str(harness)],
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertFalse(stage_root.exists(), result.stderr)
 
     def test_active_venv_is_not_used_for_dependency_install(self):
         self.assertNotIn('"$RUNTIME_VENV" -m pip install', SCRIPT)

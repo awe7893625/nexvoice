@@ -19,6 +19,7 @@ jobs:
         run: |
           zsh -n macos/scripts/build-app.sh macos/scripts/install-app.sh
           plutil -lint macos/Info.plist macos/NexVoice.entitlements
+          python3 macos/scripts/test_install_app.py
           git diff --check
   python:
     runs-on: ubuntu-latest
