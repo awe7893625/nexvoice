@@ -40,7 +40,7 @@ STAGING="$HOME/Applications/.NexVoice.app.staging.$$"
 RUNTIME_ROOT="$HOME/.cache/nexvoice/runtime"
 RUNTIME_VENV="$RUNTIME_ROOT/.venv"
 RUNTIME_STAGE_ROOT=""
-RUNTIME_LINK_STAGE=""
+RUNTIME_STAGE_PUBLISHED=0
 RUNTIME_BACKUP=""
 cleanup() {
   rm -rf "$STAGING" 2>/dev/null || true
@@ -51,8 +51,7 @@ cleanup() {
       mv "$RUNTIME_BACKUP" "$RUNTIME_VENV" 2>/dev/null || true
     fi
   fi
-  [[ -n "$RUNTIME_LINK_STAGE" ]] && rm -f "$RUNTIME_LINK_STAGE" 2>/dev/null || true
-  if [[ -n "$RUNTIME_STAGE_ROOT" && ! -L "$RUNTIME_VENV" ]]; then
+  if [[ -n "$RUNTIME_STAGE_ROOT" && "$RUNTIME_STAGE_PUBLISHED" != "1" ]]; then
     rm -rf "$RUNTIME_STAGE_ROOT" 2>/dev/null || true
   fi
   rm -rf "$LOCK_DIR" 2>/dev/null || true
@@ -162,15 +161,12 @@ if [[ "${NEXVOICE_SKIP_RUNTIME_SETUP:-0}" != "1" ]]; then
   }
 
   mkdir -p "$RUNTIME_ROOT"
-  RUNTIME_LINK_STAGE="$RUNTIME_ROOT/.venv-link.$$"
-  ln -s "$RUNTIME_STAGE_VENV" "$RUNTIME_LINK_STAGE"
 
   if [[ -L "$RUNTIME_VENV" ]]; then
-    if ! mv -f "$RUNTIME_LINK_STAGE" "$RUNTIME_VENV"; then
+    if ! "$SCRIPT_DIR/publish-runtime-venv.py" "$RUNTIME_STAGE_VENV" "$RUNTIME_VENV"; then
       echo "error: could not atomically publish staged local MLX runtime" >&2
       exit 1
     fi
-    RUNTIME_LINK_STAGE=""
   else
     # Migrate an older directory-form venv only after the staged install has
     # succeeded. If the compatibility migration fails, restore the directory.
@@ -178,15 +174,15 @@ if [[ "${NEXVOICE_SKIP_RUNTIME_SETUP:-0}" != "1" ]]; then
     if [[ -e "$RUNTIME_VENV" ]]; then
       mv "$RUNTIME_VENV" "$RUNTIME_BACKUP"
     fi
-    if ! mv "$RUNTIME_LINK_STAGE" "$RUNTIME_VENV"; then
+    if ! "$SCRIPT_DIR/publish-runtime-venv.py" "$RUNTIME_STAGE_VENV" "$RUNTIME_VENV"; then
       echo "error: could not publish staged local MLX runtime; restoring previous venv" >&2
       if [[ -e "$RUNTIME_BACKUP" ]]; then
         mv "$RUNTIME_BACKUP" "$RUNTIME_VENV" || true
       fi
       exit 1
     fi
-    RUNTIME_LINK_STAGE=""
   fi
+  RUNTIME_STAGE_PUBLISHED=1
 
   # The active symlink now owns the staged venv. Retain no obsolete copy from
   # a directory migration, while the EXIT trap can still restore it if a
