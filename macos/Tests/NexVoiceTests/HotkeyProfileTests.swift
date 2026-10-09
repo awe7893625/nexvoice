@@ -9,6 +9,7 @@ final class HotkeyProfileTests: XCTestCase {
         defaults.removePersistentDomain(forName: suiteName)
         defer {
             defaults.removePersistentDomain(forName: suiteName)
+            UserDefaults.standard.removePersistentDomain(forName: suiteName)
             // removePersistentDomain only clears cfprefsd's in-memory cache; it
             // does not reliably delete the backing plist cfprefsd already wrote
             // to ~/Library/Preferences, so every run leaked one file per test.

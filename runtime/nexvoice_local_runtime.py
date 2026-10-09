@@ -95,6 +95,9 @@ _MODEL_LOCK = threading.Lock()
 _PARTIAL_GATE = threading.Lock()
 _MODEL_CACHE: dict[str, object] = {}
 _SHUTTING_DOWN = threading.Event()
+_ZH_CONVERTER = None
+_ZH_CONVERTER_STATE: str | None = None
+_ZH_CONVERTER_LOCK = threading.Lock()
 # Idle unload (claude-c13r): the partial + final ASR weights (~3.5GB) used to
 # stay resident for the whole process lifetime. After
 # NEXVOICE_IDLE_UNLOAD_SEC with no request in flight the cache is dropped and
@@ -219,6 +222,7 @@ def health_payload(nonce: str, secret: bytes) -> dict:
         "owner_nonce": OWNER_NONCE,
         "parent_pid": PARENT_PID,
         "mlx_whisper_version": MLX_WHISPER_VERSION,
+        "zh_convert": zh_convert_status(),
         "capabilities": CAPABILITIES,
         "response_proof": _proof(secret, health_response_proof_message(nonce)),
     }
@@ -300,6 +304,95 @@ def build_initial_prompt(vocab_terms: list[str], *, partial: bool = False) -> st
 
 
 _SENTENCE_ENDERS = "，。！？；：、,.!?;:…"
+
+
+_CJK_RUN = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\U00020000-\U0002FA1F]+")
+_URL_SPAN = re.compile(r"(?i)\b(?:https?://|ftp://|www\.)[^\s<>()]+")
+_MARKDOWN_CODE_SPAN = re.compile(r"```.*?```|`[^`\n]+`", re.DOTALL)
+
+
+def _zh_convert_disabled() -> bool:
+    return os.environ.get("NEXVOICE_ZH_CONVERT", "").strip().casefold() == "off"
+
+
+def _zh_converter():
+    """Return the process-wide OpenCC converter, loading it only on demand."""
+    global _ZH_CONVERTER, _ZH_CONVERTER_STATE
+    if _zh_convert_disabled():
+        return None
+    if _ZH_CONVERTER_STATE == "available":
+        return _ZH_CONVERTER
+    if _ZH_CONVERTER_STATE == "unavailable":
+        return None
+    with _ZH_CONVERTER_LOCK:
+        if _ZH_CONVERTER_STATE == "available":
+            return _ZH_CONVERTER
+        if _ZH_CONVERTER_STATE == "unavailable":
+            return None
+        try:
+            opencc = importlib.import_module("opencc")
+            _ZH_CONVERTER = opencc.OpenCC("s2twp")
+            _ZH_CONVERTER_STATE = "available"
+        except Exception as exc:  # optional dependency; transcription must still work
+            _ZH_CONVERTER = None
+            _ZH_CONVERTER_STATE = "unavailable"
+            VAD_LOGGER.warning(
+                "Traditional-Chinese post-processing unavailable (%s: %s)",
+                type(exc).__name__,
+                exc,
+            )
+    return _ZH_CONVERTER
+
+
+def zh_convert_status() -> str:
+    """Report the health/status contract for Traditional-Chinese conversion."""
+    if _zh_convert_disabled():
+        return "off"
+    return "available" if _zh_converter() is not None else "unavailable"
+
+
+def convert_transcript(text: str, vocab_terms: list[str] | None = None) -> str:
+    """Convert only CJK runs, preserving URLs, code spans, and user terms."""
+    converter = _zh_converter()
+    if converter is None or not text:
+        return text
+
+    protected: dict[str, str] = {}
+    source = text
+    token_index = 0
+
+    def protect(pattern: re.Pattern[str]) -> None:
+        nonlocal source, token_index
+
+        def replacement(match: re.Match[str]) -> str:
+            nonlocal token_index
+            original = match.group(0)
+            while True:
+                token = f"\ue000NVZH{token_index}\ue001"
+                token_index += 1
+                if token not in source and token not in protected:
+                    break
+            protected[token] = original
+            return token
+
+        source = pattern.sub(replacement, source)
+
+    # Protect broad spans first so a vocabulary term inside a URL or code span
+    # cannot leave a partially protected span behind.
+    protect(_URL_SPAN)
+    protect(_MARKDOWN_CODE_SPAN)
+    terms = sorted(
+        {unicodedata.normalize("NFC", term) for term in (vocab_terms or []) if term},
+        key=len,
+        reverse=True,
+    )
+    if terms:
+        protect(re.compile("|".join(re.escape(term) for term in terms)))
+
+    converted = _CJK_RUN.sub(lambda match: converter.convert(match.group(0)), source)
+    for token, original in protected.items():
+        converted = converted.replace(token, original)
+    return converted
 
 
 def join_segments_with_punctuation(segments: list) -> str:
@@ -765,7 +858,11 @@ def _transcribe_core(
     else:
         segments = []
         text = str(result.get("text", "")).strip()
-    return collapse_repetition_loops(text), segments
+    text = convert_transcript(collapse_repetition_loops(text), vocab_terms)
+    for segment in segments:
+        if isinstance(segment, dict):
+            segment["text"] = convert_transcript(str(segment.get("text", "")), vocab_terms)
+    return text, segments
 
 
 def _idle_unload_seconds() -> float:

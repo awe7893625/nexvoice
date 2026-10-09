@@ -4,9 +4,22 @@ import XCTest
 /// 票E（2026-08-30）回歸鎖：三個模式熱鍵以 ProductPreferences 為唯一來源（SSOT），
 /// 舊 HotkeyProfileStore 值一次性遷移；偏好 blob 對 String/Data 雙型別防禦。
 final class HotkeySSOTTests: XCTestCase {
+    private var suiteNames: [String] = []
+
+    override func tearDown() {
+        for suiteName in suiteNames {
+            UserDefaults.standard.removePersistentDomain(forName: suiteName)
+            UserDefaults(suiteName: suiteName)?.removePersistentDomain(forName: suiteName)
+        }
+        suiteNames.removeAll()
+        super.tearDown()
+    }
+
     private func makeSuite(_ name: String) -> UserDefaults {
-        let suite = UserDefaults(suiteName: "test.\(name).\(UUID().uuidString)")!
-        suite.removePersistentDomain(forName: "test.\(name).\(UUID().uuidString)")
+        let suiteName = "test.\(name).\(UUID().uuidString)"
+        let suite = UserDefaults(suiteName: suiteName)!
+        suite.removePersistentDomain(forName: suiteName)
+        suiteNames.append(suiteName)
         return suite
     }
 

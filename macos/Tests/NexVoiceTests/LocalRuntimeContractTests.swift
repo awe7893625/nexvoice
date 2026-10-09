@@ -46,6 +46,7 @@ final class LocalRuntimeContractTests: XCTestCase {
               "owner_nonce":"owner",
               "parent_pid":123,
               "mlx_whisper_version":"0.4.2",
+              "zh_convert":"available",
               "capabilities":["identity-v1","shutdown-v1"],
               "response_proof":"deadbeef"
             }
@@ -54,6 +55,7 @@ final class LocalRuntimeContractTests: XCTestCase {
         let identity = try JSONDecoder().decode(LocalRuntimeIdentity.self, from: data)
         XCTAssertEqual(identity.instanceID, instance)
         XCTAssertEqual(identity.contractVersion, 2)
+        XCTAssertEqual(identity.zhConvert, "available")
         XCTAssertTrue(identity.capabilities.contains("shutdown-v1"))
         XCTAssertEqual(identity.responseProof, "deadbeef")
     }

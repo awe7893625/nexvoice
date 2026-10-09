@@ -70,6 +70,46 @@ class RuntimeContractTests(unittest.TestCase):
         self.assertLess(prompt.find("、"), prompt.find("以下是一段"))
         self.assertNotIn("、", runtime.STYLE_TAIL)
 
+    def test_zh_convert_simplified_sentence_uses_taiwan_phrases(self):
+        with patch.dict(os.environ, {"NEXVOICE_ZH_CONVERT": "on"}):
+            self.assertEqual(
+                runtime.convert_transcript("這個软件提供信息和视频。"),
+                "這個軟體提供資訊和影片。",
+            )
+            self.assertEqual(runtime.zh_convert_status(), "available")
+
+    def test_zh_convert_preserves_ascii_code_urls_and_vocab_terms(self):
+        with patch.dict(os.environ, {"NEXVOICE_ZH_CONVERT": "on"}):
+            text = "软件 AI foo_bar.py https://例子.中国/视频 `视频` 信息"
+            self.assertEqual(
+                runtime.convert_transcript(text, vocab_terms=["信息"]),
+                "軟體 AI foo_bar.py https://例子.中国/视频 `视频` 信息",
+            )
+
+    def test_zh_convert_can_be_disabled_without_importing_opencc(self):
+        with (
+            patch.dict(os.environ, {"NEXVOICE_ZH_CONVERT": "off"}),
+            patch.object(runtime, "_ZH_CONVERTER", None),
+            patch.object(runtime, "_ZH_CONVERTER_STATE", None),
+            patch.object(runtime.importlib, "import_module", side_effect=AssertionError("must stay off")),
+        ):
+            self.assertEqual(runtime.convert_transcript("软件 信息"), "软件 信息")
+            self.assertEqual(runtime.zh_convert_status(), "off")
+
+    def test_zh_convert_missing_opencc_is_noop_and_health_reports_unavailable(self):
+        with (
+            patch.dict(os.environ, {"NEXVOICE_ZH_CONVERT": "on"}),
+            patch.object(runtime, "_ZH_CONVERTER", None),
+            patch.object(runtime, "_ZH_CONVERTER_STATE", None),
+            patch.object(runtime.importlib, "import_module", side_effect=ImportError("test missing")),
+        ):
+            self.assertEqual(runtime.convert_transcript("软件 信息"), "软件 信息")
+            self.assertEqual(runtime.zh_convert_status(), "unavailable")
+            self.assertEqual(
+                runtime.health_payload("nonce-zh", b"secret")["zh_convert"],
+                "unavailable",
+            )
+
     def test_join_segments_closes_audible_pauses(self):
         segments = [
             {"text": "第一段話還沒說完", "start": 0.0, "end": 2.0},
@@ -264,7 +304,7 @@ class RuntimeContractTests(unittest.TestCase):
 
         def fake_transcribe(path, **kwargs):
             seen.update(kwargs)
-            return {"text": "可以看到，" * 40 + "結束。"}
+            return {"text": "软件 信息 视频。" + "可以看到，" * 40 + "結束。"}
 
         fake = types.ModuleType("mlx_whisper")
         fake.transcribe = fake_transcribe
@@ -274,6 +314,7 @@ class RuntimeContractTests(unittest.TestCase):
             text = runtime.transcribe_wav(audio)
         self.assertEqual(seen["temperature"], runtime.TEMPERATURE_FALLBACK)
         self.assertFalse(seen["condition_on_previous_text"])
+        self.assertTrue(text.startswith("軟體 資訊 影片。"))
         self.assertLessEqual(text.count("可以看到"), 2)
 
     def test_request_proof_message_binds_method_path_nonce_and_body(self):
